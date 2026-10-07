@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MidiHands</title>
+<!--
+  The MidiHands editor, shown by a jweb object in the device's editor window.
+
+  Max -> page (window.max.bindInlet):
+    param <key> <value>        a stored setting changed (boot, automation, this page)
+    hands <aspect> ...         both hands, every camera frame (see max/mh.hands.mm)
+    expr <10 values>           hand movements 0-1, every camera frame
+    status / stats / error     camera state
+    picture <url>              MJPEG stream of the camera, loopback only
+    fingertable <24>           mode, degree, octave per finger key
+    fingers <40>               per key: note count + 4 notes (-1 = none)
+    scaleinfo <root> <steps…>  the scale in use
+    mapname <slot> <name…>     mapped Live parameter, "<none>" when unmapped
+    mapping <slot> <0|1>       slot is waiting for a click in Live
+  page -> Max (window.max.outlet):
+    set <key> <value>, map <slot>, unmap <slot>, hello
+  Camera data arrives at the camera's frame rate; drawing runs at the display
+  rate and eases toward the latest frame so motion stays smooth.
+  Without Max (opened in a browser) the page runs a demo with fake hands.
+-->
+<style>
+:root {
+  --bg: #0c0d0f;
+  --surface: #141619;
+  --surface-2: #1b1e22;
+  --surface-3: #24282e;
+  --line: rgba(255, 255, 255, .07);
+  --text: #eef0f3;
+  --muted: #8b919a;
+  --faint: #4a4f57;
+  --accent: #ff9b3d;
+  --accent-2: #ff5470;
+  --grad: linear-gradient(135deg, #ffb341 0%, #ff5470 100%);
+  --left: #4cc9ff;
+  --right: #ffa23d;
+  --play: #ffe27a;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 var(--font); -webkit-font-smoothing: antialiased; }
+body { display: flex; flex-direction: column; overflow: hidden; user-select: none; -webkit-user-select: none;
+  background: radial-gradient(1200px 500px at 30% -10%, rgba(255,155,61,.06), transparent 60%), var(--bg); }
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* header ---------------------------------------------------------------- */
+header { display: flex; align-items: center; gap: 22px; padding: 14px 22px 10px; }
+.logo { display: flex; align-items: center; gap: 10px; font: 700 16px var(--display); letter-spacing: -.01em; }
+.logo svg { width: 26px; height: 26px; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { border: 0; background: transparent; padding: 7px 14px; border-radius: 9px; font: 600 12px var(--font);
+  letter-spacing: .14em; color: var(--muted); }
+.tabs button.on { color: var(--text); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.status { margin-left: auto; display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px;
+  padding: 6px 12px; border-radius: 99px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.dot.live { background: #3ddc84; box-shadow: 0 0 8px #3ddc84; }
+.dot.err { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+
+main { flex: 1; min-height: 0; padding: 4px 22px 20px; }
+.page { display: none; height: 100%; }
+.page.on { display: grid; }
+.panel { background: var(--surface); border-radius: 16px; box-shadow: inset 0 0 0 1px var(--line); min-height: 0; }
+.label { font: 700 10px var(--font); letter-spacing: .16em; color: var(--muted); text-transform: uppercase; }
+
+/* controls ---------------------------------------------------------------- */
+.seg { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.seg button { flex: 1; border: 0; background: transparent; padding: 6px 4px; border-radius: 7px; color: var(--muted); font-weight: 600; font-size: 12px; transition: background .15s, color .15s; }
+.seg button:hover { color: var(--text); }
+.seg button.on { background: var(--surface-3); color: var(--text); box-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 2px 8px rgba(0,0,0,.35); }
+.seg.accent button.on { background: var(--grad); color: #fff; }
+select { appearance: none; -webkit-appearance: none; border: 0; border-radius: 8px; padding: 6px 26px 6px 10px; background: var(--surface-3)
+  url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238b919a' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 9px center;
+  box-shadow: inset 0 0 0 1px var(--line); font-weight: 600; font-size: 12px; outline: none; }
+select:disabled { opacity: .45; }
+.switch { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 0; color: var(--muted); font-weight: 600; font-size: 12px; }
+.switch i { width: 30px; height: 18px; border-radius: 99px; background: var(--surface-3); position: relative; box-shadow: inset 0 0 0 1px var(--line); transition: background .15s; }
+.switch i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #c9ccd1; transition: transform .15s; }
+.switch.on { color: var(--text); }
+.switch.on i { background: var(--grad); }
+.switch.on i::after { transform: translateX(12px); background: #fff; }
+.step { display: flex; align-items: center; border-radius: 9px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); }
+.step button { width: 26px; height: 28px; border: 0; background: none; color: var(--muted); font-size: 15px; }
+.step button:hover { color: var(--text); }
+.step output { min-width: 40px; text-align: center; font: 600 13px var(--font); }
+.knob { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 64px; cursor: ns-resize; }
+.knob svg { width: 46px; height: 46px; overflow: visible; }
+.knob .k-track { fill: none; stroke: var(--surface-3); stroke-width: 4; stroke-linecap: round; }
+.knob .k-val { fill: none; stroke: url(#kgrad); stroke-width: 4; stroke-linecap: round; }
+.knob .k-cap { fill: var(--surface-2); stroke: rgba(255,255,255,.08); }
+.knob .k-ptr { stroke: var(--text); stroke-width: 2; stroke-linecap: round; }
+.knob span { font-size: 10px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+.knob output { font: 11px var(--mono); color: var(--text); }
+.knob.disabled { opacity: .35; pointer-events: none; }
+.btn { border: 0; border-radius: 8px; padding: 6px 11px; font-weight: 650; font-size: 12px; background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line); }
+.btn:hover { background: #2c3138; }
+.btn.primary { background: var(--grad); color: #fff; box-shadow: 0 4px 14px rgba(255, 90, 100, .25); }
+.btn.ghost { background: transparent; box-shadow: none; color: var(--muted); }
+
+/* PLAY ---------------------------------------------------------------------- */
+#play { grid-template-columns: minmax(0, 1fr) 330px; grid-template-rows: minmax(0, 1fr) 112px 78px; gap: 14px; }
+.stage { position: relative; overflow: hidden; border-radius: 16px; background: radial-gradient(120% 120% at 50% 0%, #17191d 0%, #0a0b0d 70%); box-shadow: inset 0 0 0 1px var(--line); }
+.stage img, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.stage img { filter: grayscale(1) brightness(.62) contrast(1.1); }
+.stage::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(130% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.55)); }
+.stage .hint { position: absolute; left: 18px; bottom: 14px; z-index: 2; color: var(--muted); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.stage .hint b { color: var(--text); font-weight: 600; }
+
+.pads { display: grid; grid-template-columns: repeat(4, 1fr) 18px repeat(4, 1fr); gap: 8px; }
+.pad { position: relative; border: 0; border-radius: 14px; background: linear-gradient(180deg, #1d2025, #16181c); box-shadow: inset 0 0 0 1px var(--line), 0 6px 16px rgba(0,0,0,.25);
+  display: flex; flex-direction: column; justify-content: space-between; padding: 10px 11px; text-align: left; overflow: hidden; transition: transform .08s, box-shadow .12s; }
+.pad::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--side); opacity: .8; }
+.pad .name { font: 700 22px/1 var(--display); letter-spacing: -.02em; }
+.pad .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; font-weight: 600; }
+.pad .finger { color: var(--faint); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+.pad.off .name { color: var(--faint); }
+.pad.sel { box-shadow: inset 0 0 0 2px var(--text), 0 6px 16px rgba(0,0,0,.25); }
+.pad.playing { background: radial-gradient(120% 140% at 50% 0%, rgba(255,226,122,.42), rgba(255,140,60,.12) 60%, #17191d); transform: translateY(1px);
+  box-shadow: inset 0 0 0 1px rgba(255,226,122,.55), 0 0 26px rgba(255,190,80,.35); }
+.pad.playing .name { color: #fff6d6; }
+.pad.playing .finger, .pad.playing .meta { color: rgba(255, 246, 214, .75); }
+.pads .gap { display: flex; align-items: center; justify-content: center; }
+.pads .gap i { width: 1px; height: 60%; background: var(--line); }
+
+.keyboard { padding: 10px 12px; }
+.keys { position: relative; height: 100%; }
+.key { position: absolute; top: 0; border-radius: 0 0 6px 6px; }
+.key.white { height: 100%; background: linear-gradient(180deg, #cfd2d6, #e9ebee 85%, #f6f7f8); box-shadow: inset -1px 0 0 rgba(0,0,0,.25); }
+.key.white:not(.inscale) { background: linear-gradient(180deg, #6f747b, #8a8f96); }
+.key.black { height: 58%; background: linear-gradient(180deg, #1a1c1f, #2b2e33); z-index: 2; box-shadow: 0 2px 4px rgba(0,0,0,.5); }
+.key.black.inscale { background: linear-gradient(180deg, #3a3f46, #50565e); }
+.key.root::before { content: ""; position: absolute; left: 50%; top: 6px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--accent); }
+.key.target::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: 3px; height: 4px; border-radius: 2px; background: var(--left); }
+.key.playing { background: linear-gradient(180deg, #ffe9a0, var(--play)) !important; box-shadow: 0 0 16px rgba(255,226,122,.85); }
+.key span { position: absolute; bottom: 9px; width: 100%; text-align: center; font-size: 9px; color: #5d6168; font-weight: 600; }
+
+.side { grid-row: 1 / span 3; grid-column: 2; padding: 16px; display: flex; flex-direction: column; gap: 16px; position: relative; }
+.side section { display: flex; flex-direction: column; gap: 9px; }
+.editor { background: var(--surface-2); border-radius: 13px; padding: 14px; display: flex; flex-direction: column; gap: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+.editor .head { display: flex; justify-content: space-between; align-items: flex-start; }
+.editor .who { font-size: 12px; color: var(--muted); font-weight: 600; }
+.editor .big { font: 700 30px/1 var(--display); letter-spacing: -.02em; margin-top: 4px; }
+.editor .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.editor .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.editor .pair > div { display: flex; flex-direction: column; gap: 6px; }
+.editor .pair .step { justify-content: space-between; }
+.tip { color: var(--faint); font-size: 11px; }
+.knobs { display: flex; justify-content: space-between; }
+.keyrow { display: flex; gap: 6px; align-items: center; }
+.keyrow select { flex: 1; min-width: 0; }
+.more { margin-top: auto; }
+.sheet { position: absolute; left: 10px; right: 10px; bottom: 54px; padding: 16px; border-radius: 14px; background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line), 0 20px 40px rgba(0,0,0,.55); display: none; flex-direction: column; gap: 14px; z-index: 5; }
+.sheet.on { display: flex; }
+.sheet .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* MOVE ------------------------------------------------------------------------ */
+#move { grid-template-columns: 300px minmax(0, 1fr); gap: 14px; }
+.meters { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.mgroup { display: flex; flex-direction: column; gap: 4px; }
+.mgroup .label { margin-bottom: 4px; }
+.meter { display: grid; grid-template-columns: 52px 1fr 30px; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 8px; }
+.meter.used { background: var(--surface-2); }
+.meter span { color: var(--muted); font-size: 12px; font-weight: 600; }
+.bar { height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; border-radius: 3px; }
+.meter em { font: normal 11px var(--mono); color: var(--faint); text-align: right; }
+.learnhint { margin-top: auto; padding: 12px; border-radius: 12px; background: var(--surface-2); color: var(--muted); font-size: 12px; box-shadow: inset 0 0 0 1px var(--line); }
+.learnhint b { color: var(--text); }
+.slots { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: max-content; gap: 12px; overflow: auto; align-content: start; }
+.slot { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; transition: box-shadow .2s; }
+.slot.learning { box-shadow: inset 0 0 0 1px var(--accent), 0 0 30px rgba(255,155,61,.25); }
+.slot .head, .slot .to { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.slot .head select { flex: 1; min-width: 0; }
+.slot .num { width: 22px; height: 22px; border-radius: 7px; background: var(--surface-3); display: grid; place-items: center; font-weight: 700; color: var(--muted); font-size: 11px; }
+.slot .target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+.slot .target.none { color: var(--faint); font-weight: 500; }
+.slot .target.listening { color: var(--accent); }
+.slot .arrow { color: var(--faint); }
+.slot .grid { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 12px; align-items: center; }
+.slot .rr { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; gap: 6px; }
+.slot .rr > span { font-size: 10px; color: var(--muted); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.range { position: relative; height: 22px; }
+.range .track { position: absolute; left: 0; right: 0; top: 9px; height: 4px; background: var(--surface-3); border-radius: 2px; }
+.range .span { position: absolute; top: 9px; height: 4px; background: #5b616a; border-radius: 2px; }
+.range .now { position: absolute; top: 5px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.range .h { position: absolute; top: 3px; width: 8px; height: 16px; margin-left: -4px; border-radius: 3px; background: #e6e8eb; cursor: ew-resize; }
+.slot canvas { width: 72px; height: 44px; background: var(--bg); border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); cursor: ns-resize; }
+
+.toast { position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 8px); background: var(--surface-3); padding: 9px 16px; border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,.5); opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; font-weight: 600; z-index: 10; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="kgrad" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#ffb341"/><stop offset="1" stop-color="#ff5470"/></linearGradient>
+</defs></svg>
+<header>
+  <div class="logo"><svg viewBox="0 0 26 26"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb341"/><stop offset="1" stop-color="#ff5470"/></linearGradient></defs>
+    <rect width="26" height="26" rx="8" fill="url(#lg)"/><path d="M8 18V10M11.5 18V7.5M15 18V8.5M18.5 18v-6" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>midihands</div>
+  <div class="tabs"><button data-page="play" class="on">PLAY</button><button data-page="move">MOVE</button></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Camera off</span></div>
+</header>
+
+<main>
+  <section class="page on" id="play">
+    <div class="stage" id="stage">
+      <img id="picture" alt="">
+      <canvas id="overlay"></canvas>
+      <div class="hint" id="stageHint"><b>Straighten a finger</b> to play its pad. Thumbs never play.</div>
+    </div>
+    <div class="pads" id="pads"></div>
+    <div class="panel keyboard"><div class="keys" id="keys"></div></div>
+
+    <div class="panel side">
+      <section><div class="label">Layout</div>
+        <div class="seg accent" id="presets"><button data-v="0">Keys</button><button data-v="1">Chords</button><button data-v="2">Split</button><button data-v="3">Custom</button></div>
+      </section>
+      <div class="editor">
+        <div class="head"><div><div class="who" id="selName">Right index</div><div class="big" id="selBig">C4</div><div class="sub" id="selSub">note · I</div></div>
+          <div class="seg" id="modeSeg" style="width:150px"><button data-v="0">Off</button><button data-v="1">Note</button><button data-v="2">Chord</button></div></div>
+        <div class="pair">
+          <div><span class="label">Degree</span><div class="step" id="degStep"><button data-d="-1">‹</button><output id="degOut">I</output><button data-d="1">›</button></div></div>
+          <div><span class="label">Octave</span><div class="step" id="octStepPad"><button data-o="-1">‹</button><output id="octOut">0</output><button data-o="1">›</button></div></div>
+        </div>
+        <div class="tip">Click a pad to edit it, then a key below to set its note.</div>
+      </div>
+      <section><div class="label">Sound</div>
+        <div class="knobs">
+          <div class="knob" data-key="sens" data-min="0" data-max="100" data-def="50" data-fmt="pct"></div>
+          <div class="knob" data-key="vel" data-min="1" data-max="127" data-def="100" data-fmt="int"></div>
+          <div class="knob" data-key="oct" data-min="-3" data-max="3" data-def="0" data-fmt="oct" data-step="1"></div>
+        </div>
+        <div class="seg" id="velmodeSeg"><button data-v="0">Fixed velocity</button><button data-v="1">From height</button><button data-v="2">From speed</button></div>
+      </section>
+      <section><div class="label">Key</div>
+        <div class="keyrow"><button class="switch" id="follow"><i></i>Follow Live</button><select id="root"></select><select id="scale"></select></div>
+      </section>
+      <section><div class="label">Hands that play</div>
+        <div class="seg" id="handsSeg"><button data-v="0">Both</button><button data-v="1">Left</button><button data-v="2">Right</button></div>
+      </section>
+      <button class="btn more" id="moreBtn">Timing &amp; MIDI…</button>
+      <div class="sheet" id="sheet">
+        <div class="knobs">
+          <div class="knob" data-key="minnote" data-min="0" data-max="1000" data-def="180" data-fmt="ms" data-label="Min note"></div>
+          <div class="knob" data-key="hold" data-min="0" data-max="2000" data-def="300" data-fmt="ms" data-label="Hold"></div>
+          <div class="knob" data-key="smooth" data-min="0" data-max="500" data-def="50" data-fmt="ms" data-label="Smooth"></div>
+        </div>
+        <div class="row"><span class="label">MIDI channel</span><select id="chan"></select></div>
+        <div class="row"><button class="switch" id="ccout"><i></i>Send movements as CC</button><span class="row" style="gap:6px"><span class="tip">from</span><select id="ccbase"></select></span></div>
+        <div class="tip">Min note hides flicker. Hold keeps notes through short tracking dropouts. Smooth evens out the movement values.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="page" id="move">
+    <div class="panel meters" id="meters">
+      <div class="label">Your movements</div>
+      <div class="learnhint"><b>Learn</b> picks the movement you make for a few seconds and fits the range to how far you moved. Then click any parameter in Live.</div>
+    </div>
+    <div class="slots" id="slots"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const MAX = typeof window.max !== "undefined";
+const EXPR = ["L Height", "L X", "L Pinch", "L Fist", "L Tilt", "R Height", "R X", "R Pinch", "R Fist", "R Tilt"];
+const SCALES = ["Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Locrian", "Harmonic Minor",
+  "Melodic Minor", "Major Pentatonic", "Minor Pentatonic", "Blues", "Chromatic"];
+const SCALE_STEPS = [[0,2,4,5,7,9,11],[0,2,3,5,7,8,10],[0,2,3,5,7,9,10],[0,1,3,5,7,8,10],[0,2,4,6,7,9,11],
+  [0,2,4,5,7,9,10],[0,1,3,5,6,8,10],[0,2,3,5,7,8,11],[0,2,3,5,7,9,11],[0,2,4,7,9],[0,3,5,7,10],[0,3,5,6,7,10],
+  [0,1,2,3,4,5,6,7,8,9,10,11]];
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const KEY_NAMES = ["Left pinky","Left ring","Left middle","Left index","Right index","Right middle","Right ring","Right pinky"];
+const KEY_SIDE = [0, 0, 0, 0, 1, 1, 1, 1];
+const KEY_FINGER = [4, 3, 2, 1, 1, 2, 3, 4];   // 1 index .. 4 pinky
+const SLOTS = 8;
+const LOW_NOTE = 36, HIGH_NOTE = 84;            // keyboard C2..C6
+const EASE_MS = 45;                             // display smoothing toward each camera frame
+
+// ---- state --------------------------------------------------------------------
+const P = { layout: 2, hands: 0, follow: 1, root: 0, scale: 0, sens: 50, vel: 100, velmode: 0, oct: 0,
+  minnote: 180, hold: 300, smooth: 50, chan: 1, ccout: 0, ccbase: 20 };
+for (let k = 0; k < SLOTS; k++) Object.assign(P, { [`m${k}src`]: [5,7,0,3,6,9,1,4][k], [`m${k}lo`]: 0, [`m${k}hi`]: 1,
+  [`m${k}curve`]: 0, [`m${k}min`]: 0, [`m${k}max`]: 1 });
+const S = {
+  target: [null, null], drawn: [null, null], fade: [0, 0], aspect: 16 / 9,
+  expr: new Array(10).fill(0), exprDrawn: new Array(10).fill(0),
+  table: [[2,0,-1],[2,3,-1],[2,4,-1],[2,5,-1],[1,0,0],[1,1,0],[1,2,0],[1,4,0]],
+  notes: [], scaleRoot: 0, scaleSteps: [0,2,4,5,7,9,11], selected: 4,
+  maps: new Array(SLOTS).fill("<none>"), listening: new Array(SLOTS).fill(0),
+  learning: -1, learnMin: null, learnMax: null, learnUntil: 0, camera: "", devices: 1,
+};
+
+const $ = (id) => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+function send(...a) { if (MAX) window.max.outlet(...a); }
+function setParam(key, value) { P[key] = value; send("set", key, value); render(); }
+let toastTimer = 0;
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 2200); }
+
+// ---- music helpers ----------------------------------------------------------------
+const noteName = (n) => NOTE_NAMES[((n % 12) + 12) % 12] + (Math.floor(n / 12) - 1);
+function chordName(notes) {
+  if (!notes.length) return "–";
+  if (notes.length === 1) return noteName(notes[0]);
+  const r = notes[0], i3 = notes[1] - r, i5 = notes[2] - r, base = NOTE_NAMES[r % 12];
+  if (i3 === 4 && i5 === 7) return base;
+  if (i3 === 3 && i5 === 7) return base + "m";
+  if (i3 === 3 && i5 === 6) return base + "°";
+  if (i3 === 4 && i5 === 8) return base + "+";
+  return base + "sus";
+}
+function roman(degree, steps) {
+  const size = steps.length, d = ((degree % size) + size) % size;
+  return ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"][d];
+}
+const keyLabel = (k) => (S.table[k] && S.table[k][0] === 0) ? "off" : chordName(S.notes[k] || []);
+function scaleName() {
+  const i = SCALE_STEPS.findIndex((s) => s.length === S.scaleSteps.length && s.every((v, j) => v === S.scaleSteps[j]));
+  return `${NOTE_NAMES[S.scaleRoot]} ${i >= 0 ? SCALES[i] : "custom scale"}`;
+}
+
+// ---- incoming ----------------------------------------------------------------------
+function onParam(key, value) { if (key in P) { P[key] = value; render(); } }
+function onHands(...a) {
+  if (a[0] > 0) S.aspect = a[0];
+  let n = 1;
+  for (let s = 0; s < 2; s++) {
+    const present = a[n++] > 0.5, pts = [];
+    for (let i = 0; i < 21; i++) { pts.push([a[n], a[n + 1]]); n += 2; }
+    const on = [false, a[n] > .5, a[n + 1] > .5, a[n + 2] > .5, a[n + 3] > .5]; n += 4;
+    S.target[s] = present ? { pts, on } : null;
+  }
+}
+function onExpr(...v) {
+  S.expr = v.slice(0, 10);
+  if (S.learning >= 0) {
+    S.learnMin = S.learnMin ? S.learnMin.map((m, i) => Math.min(m, v[i])) : v.slice();
+    S.learnMax = S.learnMax ? S.learnMax.map((m, i) => Math.max(m, v[i])) : v.slice();
+    if (performance.now() > S.learnUntil) finishLearn();
+  }
+}
+function onStatus(...a) {
+  if (a[0] === "running") { $("dot").className = "dot live"; S.camera = String(a[1]); S.devices = a[5] || 1; }
+  else { $("dot").className = "dot"; S.camera = ""; $("statusText").textContent = a[0] === "stopped" ? "Camera off" : a.join(" "); $("picture").removeAttribute("src"); }
+}
+function onStats(fps, ms) {
+  if (!S.camera) return;
+  const shared = S.devices > 1 ? ` · ${S.devices} devices` : "";
+  $("statusText").textContent = `${S.camera} · ${Math.round(fps)} fps · ${ms.toFixed(1)} ms${shared}`;
+}
+function onError(...a) { $("dot").className = "dot err"; $("statusText").textContent = a.join(" "); }
+function onPicture(url) { if ($("picture").getAttribute("src") !== url) $("picture").src = url; }
+function onFingertable(...a) { for (let k = 0; k < 8; k++) S.table[k] = [a[k * 3], a[k * 3 + 1], a[k * 3 + 2]]; render(); }
+function onFingers(...a) { for (let k = 0; k < 8; k++) { const c = a[k * 5]; S.notes[k] = a.slice(k * 5 + 1, k * 5 + 1 + c); } render(); }
+function onScaleinfo(root, ...steps) { S.scaleRoot = root; S.scaleSteps = steps; render(); }
+function onMapname(slot, ...name) { const n = name.join(" ").trim(); S.maps[slot] = n || "<none>"; S.listening[slot] = 0; renderSlots(); }
+function onMapping(slot, on) { S.listening[slot] = on; renderSlots(); }
+
+if (MAX) {
+  const bind = { param: onParam, hands: onHands, expr: onExpr, status: onStatus, stats: onStats, error: onError,
+    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo,
+    mapname: onMapname, mapping: onMapping };
+  for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
+}
+
+// ---- tabs ------------------------------------------------------------------------------
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".page").forEach((p) => p.classList.toggle("on", p.id === b.dataset.page));
+  sizeCanvas();
+});
+
+// ---- knobs ---------------------------------------------------------------------------------
+const ARC = 270, R = 19;
+function arcPath(f) {
+  const a0 = (135) * Math.PI / 180, a1 = (135 + ARC * f) * Math.PI / 180;
+  const p = (a) => `${23 + R * Math.cos(a)} ${23 + R * Math.sin(a)}`;
+  return `M ${p(a0)} A ${R} ${R} 0 ${ARC * f > 180 ? 1 : 0} 1 ${p(a1)}`;
+}
+const FMT = { pct: (v) => `${Math.round(v)}%`, int: (v) => `${Math.round(v)}`, ms: (v) => `${Math.round(v)} ms`, oct: (v) => (v > 0 ? "+" : "") + Math.round(v) };
+function buildKnobs() {
+  document.querySelectorAll(".knob").forEach((k) => {
+    const key = k.dataset.key, lo = +k.dataset.min, hi = +k.dataset.max, step = +(k.dataset.step || 0);
+    const names = { sens: "Sens", vel: "Velocity", oct: "Octave" };
+    k.innerHTML = `<svg viewBox="0 0 46 46"><path class="k-track" d="${arcPath(1)}"/><path class="k-val"/><circle class="k-cap" cx="23" cy="23" r="13"/><line class="k-ptr" x1="23" y1="23" x2="23" y2="13"/></svg><output></output><span>${k.dataset.label || names[key]}</span>`;
+    k.onpointerdown = (e) => {
+      k.setPointerCapture(e.pointerId);
+      const y0 = e.clientY, v0 = P[key];
+      k.onpointermove = (m) => {
+        let v = clamp(v0 + (y0 - m.clientY) * (hi - lo) / (m.shiftKey ? 600 : 160), lo, hi);
+        v = step ? Math.round(v / step) * step : (hi - lo > 20 ? Math.round(v) : v);
+        if (v !== P[key]) setParam(key, v);
+      };
+      k.onpointerup = () => { k.onpointermove = null; };
+    };
+    k.ondblclick = () => setParam(key, +k.dataset.def);
+    k.onwheel = (e) => { e.preventDefault(); const d = (hi - lo) / (step ? (hi - lo) : 100); setParam(key, clamp(P[key] - Math.sign(e.deltaY) * d, lo, hi)); };
+  });
+}
+function renderKnobs() {
+  document.querySelectorAll(".knob").forEach((k) => {
+    const key = k.dataset.key, lo = +k.dataset.min, hi = +k.dataset.max, f = clamp((P[key] - lo) / (hi - lo), 0, 1);
+    k.querySelector(".k-val").setAttribute("d", f > 0.001 ? arcPath(f) : "");
+    k.querySelector(".k-ptr").setAttribute("transform", `rotate(${-135 + ARC * f} 23 23)`);
+    k.querySelector("output").textContent = FMT[k.dataset.fmt](P[key]);
+  });
+  document.querySelector('.knob[data-key="vel"]').classList.toggle("disabled", P.velmode !== 0);
+}
+
+// ---- pads ----------------------------------------------------------------------------------
+function buildPads() {
+  const box = $("pads"); box.innerHTML = "";
+  for (let k = 0; k < 8; k++) {
+    if (k === 4) { const g = document.createElement("div"); g.className = "gap"; g.innerHTML = "<i></i>"; box.appendChild(g); }
+    const b = document.createElement("button");
+    b.className = "pad"; b.dataset.key = k;
+    b.style.setProperty("--side", KEY_SIDE[k] ? "var(--right)" : "var(--left)");
+    b.innerHTML = `<div class="finger">${KEY_NAMES[k].replace("Left ", "L · ").replace("Right ", "R · ")}</div><div class="name"></div><div class="meta"><span class="kind"></span><span class="deg"></span></div>`;
+    b.onclick = () => { S.selected = k; render(); };
+    box.appendChild(b);
+  }
+}
+function setSlot(key, mode, degree, octave) {
+  if (P.layout !== 3) setParam("layout", 3);   // editing makes the layout custom; switch first so no preset overwrites it
+  setParam(`f${key}mode`, mode); setParam(`f${key}deg`, degree); setParam(`f${key}oct`, octave);
+  S.table[key] = [mode, degree, octave];
+  if (!MAX) demoResolve();
+  render();
+}
+$("modeSeg").onclick = (e) => { const v = e.target.dataset.v; if (v === undefined) return; const [, d, o] = S.table[S.selected]; setSlot(S.selected, +v, d, o); };
+$("degStep").onclick = (e) => { if (!e.target.dataset.d) return; const [m, d, o] = S.table[S.selected]; setSlot(S.selected, m || 1, d + +e.target.dataset.d, o); };
+$("octStepPad").onclick = (e) => { if (!e.target.dataset.o) return; const [m, d, o] = S.table[S.selected]; setSlot(S.selected, m || 1, d, clamp(o + +e.target.dataset.o, -3, 3)); };
+$("presets").onclick = (e) => { const v = e.target.dataset.v; if (v === undefined) return; setParam("layout", +v); if (!MAX) demoPreset(+v); };
+
+// ---- keyboard --------------------------------------------------------------------------------
+function buildKeyboard() {
+  const keys = $("keys"); keys.innerHTML = "";
+  const isBlack = (n) => [1,3,6,8,10].includes(n % 12);
+  const whites = []; for (let n = LOW_NOTE; n <= HIGH_NOTE; n++) if (!isBlack(n)) whites.push(n);
+  const w = 100 / whites.length;
+  for (let n = LOW_NOTE; n <= HIGH_NOTE; n++) {
+    const k = document.createElement("div");
+    k.className = "key " + (isBlack(n) ? "black" : "white"); k.dataset.note = n;
+    if (isBlack(n)) { const i = whites.indexOf(n - 1); k.style.left = `calc(${(i + 1) * w}% - ${w * .31}%)`; k.style.width = `${w * .62}%`; }
+    else { const i = whites.indexOf(n); k.style.left = `calc(${i * w}% + 1px)`; k.style.width = `calc(${w}% - 2px)`; if (n % 12 === 0) k.innerHTML = `<span>${noteName(n)}</span>`; }
+    k.onclick = () => assignNote(n);
+    keys.appendChild(k);
+  }
+}
+function assignNote(n) {
+  const steps = S.scaleSteps, size = steps.length, base = 60 + S.scaleRoot + 12 * P.oct;
+  let best = null;
+  for (let oct = -3; oct <= 3; oct++) for (let d = 0; d < size; d++) {
+    const note = base + steps[d] + 12 * oct, dist = Math.abs(note - n);
+    if (!best || dist < best.dist) best = { dist, d, oct, note };
+  }
+  const [mode] = S.table[S.selected];
+  setSlot(S.selected, mode || 1, best.d, best.oct);
+  toast(best.dist ? `${noteName(n)} isn't in ${scaleName()} – snapped to ${noteName(best.note)}` : `${KEY_NAMES[S.selected]} → ${keyLabel(S.selected)}`);
+}
+
+// ---- sound / key / hands / sheet ----------------------------------------------------------------------------
+function fillSelect(id, items) { $(id).innerHTML = items.map((t, i) => `<option value="${i}">${t}</option>`).join(""); }
+fillSelect("root", NOTE_NAMES); fillSelect("scale", SCALES);
+$("chan").innerHTML = Array.from({ length: 16 }, (_, i) => `<option value="${i + 1}">Channel ${i + 1}</option>`).join("");
+$("ccbase").innerHTML = Array.from({ length: 119 }, (_, i) => `<option value="${i}">CC ${i}</option>`).join("");
+for (const id of ["root", "scale", "chan", "ccbase"]) $(id).onchange = (e) => setParam(id, +e.target.value);
+$("follow").onclick = () => setParam("follow", P.follow ? 0 : 1);
+$("ccout").onclick = () => setParam("ccout", P.ccout ? 0 : 1);
+$("handsSeg").onclick = (e) => e.target.dataset.v !== undefined && setParam("hands", +e.target.dataset.v);
+$("velmodeSeg").onclick = (e) => e.target.dataset.v !== undefined && setParam("velmode", +e.target.dataset.v);
+$("moreBtn").onclick = (e) => { e.stopPropagation(); $("sheet").classList.toggle("on"); };
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#sheet") && e.target.id !== "moreBtn") $("sheet").classList.remove("on"); });
+
+// ---- MOVE --------------------------------------------------------------------------------------------
+function buildMeters() {
+  const box = $("meters"), hint = box.querySelector(".learnhint");
+  for (let side = 0; side < 2; side++) {
+    const g = document.createElement("div"); g.className = "mgroup";
+    g.innerHTML = `<div class="label" style="color:var(--${side ? "right" : "left"})">${side ? "Right" : "Left"} hand</div>`;
+    for (let i = 0; i < 5; i++) {
+      const idx = side * 5 + i, m = document.createElement("div");
+      m.className = "meter"; m.id = `meter${idx}`;
+      m.innerHTML = `<span>${EXPR[idx].slice(2)}</span><div class="bar"><i style="background:var(--${side ? "right" : "left"})"></i></div><em>0</em>`;
+      g.appendChild(m);
+    }
+    box.insertBefore(g, hint);
+  }
+}
+function buildSlots() {
+  const box = $("slots");
+  for (let k = 0; k < SLOTS; k++) {
+    const c = document.createElement("div"); c.className = "panel slot"; c.id = `slot${k}`;
+    c.innerHTML = `
+      <div class="head"><div class="num">${k + 1}</div>
+        <select class="src">${EXPR.map((n, i) => `<option value="${i}">${n}</option>`).join("")}</select>
+        <button class="btn learn">Learn</button></div>
+      <div class="to"><span class="arrow">→</span><div class="target none">not mapped</div>
+        <button class="btn map">Map</button><button class="btn ghost unmap" title="Unmap">✕</button></div>
+      <div class="grid">
+        <div>
+          <div class="rr" title="The part of the movement that is used. Learn sets it for you."><span>In</span>
+            <div class="range"><div class="track"></div><div class="span"></div><div class="h lo"></div><div class="h hi"></div><div class="now"></div></div></div>
+          <div class="rr" title="How far the parameter moves. Drag min past max to invert."><span>Out</span>
+            <div class="range outr"><div class="track"></div><div class="span"></div><div class="h lo"></div><div class="h hi"></div></div></div>
+        </div>
+        <canvas class="curve" width="144" height="88" title="Drag up/down to bend the response, double-click to reset"></canvas>
+      </div>`;
+    c.querySelector(".src").onchange = (e) => setParam(`m${k}src`, +e.target.value);
+    c.querySelector(".learn").onclick = () => startLearn(k);
+    c.querySelector(".map").onclick = () => { send("map", k); toast("Click the parameter in Live (if nothing happens, click it once more)"); if (!MAX) { S.listening[k] = 1; renderSlots(); } };
+    c.querySelector(".unmap").onclick = () => { send("unmap", k); if (!MAX) { S.maps[k] = "<none>"; renderSlots(); } };
+    dragHandles(c.querySelector(".range:not(.outr)"), `m${k}lo`, `m${k}hi`);
+    dragHandles(c.querySelector(".range.outr"), `m${k}min`, `m${k}max`);
+    const cv = c.querySelector(".curve");
+    cv.onpointerdown = (e) => {
+      cv.setPointerCapture(e.pointerId);
+      const y0 = e.clientY, c0 = P[`m${k}curve`];
+      cv.onpointermove = (m) => setParam(`m${k}curve`, clamp(Math.round(c0 + (y0 - m.clientY) * 1.5), -100, 100));
+      cv.onpointerup = () => { cv.onpointermove = null; };
+    };
+    cv.ondblclick = () => setParam(`m${k}curve`, 0);
+    box.appendChild(c);
+  }
+}
+function dragHandles(range, loKey, hiKey) {
+  for (const [cls, key] of [["lo", loKey], ["hi", hiKey]]) {
+    const h = range.querySelector(`.h.${cls}`);
+    h.onpointerdown = (e) => {
+      h.setPointerCapture(e.pointerId);
+      h.onpointermove = (m) => { const r = range.getBoundingClientRect(); setParam(key, Math.round(clamp((m.clientX - r.left) / r.width, 0, 1) * 100) / 100); };
+      h.onpointerup = () => { h.onpointermove = null; };
+    };
+  }
+}
+function startLearn(k) { S.learning = k; S.learnMin = null; S.learnMax = null; S.learnUntil = performance.now() + 3000; toast("Make the movement now…"); renderSlots(); }
+function finishLearn() {
+  const k = S.learning; S.learning = -1;
+  let best = -1, span = 0;
+  for (let i = 0; i < 10; i++) { const s = S.learnMax[i] - S.learnMin[i]; if (s > span) { span = s; best = i; } }
+  if (best < 0 || span < 0.08) { toast("Didn't see enough movement – try a bigger gesture"); renderSlots(); return; }
+  setParam(`m${k}src`, best);
+  setParam(`m${k}lo`, Math.max(0, Math.round((S.learnMin[best] - .02) * 100) / 100));
+  setParam(`m${k}hi`, Math.min(1, Math.round((S.learnMax[best] + .02) * 100) / 100));
+  if (S.maps[k] === "<none>") { send("map", k); S.listening[k] = 1; toast(`Learned ${EXPR[best]} – now click the parameter in Live`); }
+  else toast(`Learned ${EXPR[best]}`);
+  renderSlots();
+}
+const shapedX = (k, v) => clamp((v - P[`m${k}lo`]) / Math.max(P[`m${k}hi`] - P[`m${k}lo`], 0.001), 0, 1);
+const curveY = (k, x) => Math.pow(x, Math.pow(2, P[`m${k}curve`] / 50));
+function drawCurve(cv, k, v) {
+  const g = cv.getContext("2d"), w = cv.width, h = cv.height, pad = 10;
+  g.clearRect(0, 0, w, h);
+  const grad = g.createLinearGradient(0, h, w, 0); grad.addColorStop(0, "#ffb341"); grad.addColorStop(1, "#ff5470");
+  g.strokeStyle = grad; g.lineWidth = 3; g.lineCap = "round"; g.beginPath();
+  for (let i = 0; i <= 40; i++) { const x = i / 40; g[i ? "lineTo" : "moveTo"](pad + x * (w - 2 * pad), h - pad - curveY(k, x) * (h - 2 * pad)); }
+  g.stroke();
+  const x = shapedX(k, v);
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(pad + x * (w - 2 * pad), h - pad - curveY(k, x) * (h - 2 * pad), 4.5, 0, 7); g.fill();
+}
+
+// ---- static rendering (on changes) ------------------------------------------------------------------------
+function render() {
+  document.querySelectorAll("#presets button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.layout));
+  for (let k = 0; k < 8; k++) {
+    const pad = document.querySelector(`.pad[data-key="${k}"]`); if (!pad) continue;
+    const [mode, d, o] = S.table[k] || [0, 0, 0];
+    pad.classList.toggle("sel", k === S.selected); pad.classList.toggle("off", mode === 0);
+    pad.querySelector(".name").textContent = keyLabel(k);
+    pad.querySelector(".kind").textContent = ["off", "note", "chord"][mode];
+    pad.querySelector(".deg").textContent = mode ? roman(d, S.scaleSteps) + (o ? (o > 0 ? " ↑" : " ↓") : "") : "";
+  }
+  const [m, d, o] = S.table[S.selected] || [0, 0, 0];
+  $("selName").textContent = KEY_NAMES[S.selected];
+  $("selBig").textContent = keyLabel(S.selected);
+  $("selSub").textContent = m === 0 ? "silent" : `${m === 2 ? "chord" : "note"} · degree ${roman(d, S.scaleSteps)} · ${scaleName()}`;
+  document.querySelectorAll("#modeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === m));
+  $("degOut").textContent = roman(d, S.scaleSteps); $("octOut").textContent = (o > 0 ? "+" : "") + o;
+  const sel = new Set(S.notes[S.selected] || []);
+  document.querySelectorAll(".key").forEach((k) => {
+    const n = +k.dataset.note, pc = ((n - S.scaleRoot) % 12 + 12) % 12;
+    k.classList.toggle("inscale", S.scaleSteps.includes(pc)); k.classList.toggle("root", pc === 0); k.classList.toggle("target", sel.has(n));
+  });
+  $("follow").classList.toggle("on", !!P.follow); $("root").disabled = $("scale").disabled = !!P.follow;
+  if (P.follow) {   // show what Live's scale resolved to
+    $("root").value = S.scaleRoot;
+    const i = SCALE_STEPS.findIndex((s) => s.length === S.scaleSteps.length && s.every((v, j) => v === S.scaleSteps[j]));
+    $("scale").value = i >= 0 ? i : 0;
+  } else { $("root").value = P.root; $("scale").value = P.scale; }
+  $("chan").value = P.chan; $("ccbase").value = P.ccbase; $("ccout").classList.toggle("on", !!P.ccout);
+  document.querySelectorAll("#handsSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.hands));
+  document.querySelectorAll("#velmodeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.velmode));
+  renderKnobs();
+  renderSlots();
+}
+function renderSlots() {
+  const used = new Set();
+  for (let k = 0; k < SLOTS; k++) {
+    const c = $(`slot${k}`); if (!c) continue;
+    const src = P[`m${k}src`], mapped = S.maps[k] !== "<none>";
+    if (mapped) used.add(src);
+    c.classList.toggle("learning", S.learning === k);
+    if (document.activeElement !== c.querySelector(".src")) c.querySelector(".src").value = src;
+    const t = c.querySelector(".target");
+    t.textContent = S.listening[k] ? "click a parameter in Live…" : mapped ? S.maps[k] : "not mapped";
+    t.className = "target" + (S.listening[k] ? " listening" : mapped ? "" : " none");
+    c.querySelector(".map").className = "btn map" + (mapped ? "" : " primary");
+    c.querySelector(".unmap").style.display = mapped ? "" : "none";
+    for (const [sel, lo, hi] of [[".range:not(.outr)", P[`m${k}lo`], P[`m${k}hi`]], [".range.outr", P[`m${k}min`], P[`m${k}max`]]]) {
+      const r = c.querySelector(sel);
+      r.querySelector(".span").style.left = `${Math.min(lo, hi) * 100}%`; r.querySelector(".span").style.width = `${Math.abs(hi - lo) * 100}%`;
+      r.querySelector(".h.lo").style.left = `${lo * 100}%`; r.querySelector(".h.hi").style.left = `${hi * 100}%`;
+    }
+  }
+  for (let i = 0; i < 10; i++) { const m = $(`meter${i}`); if (m) m.classList.toggle("used", used.has(i)); }
+}
+
+// ---- animation: runs every display frame, eases toward the latest camera frame -------------------------
+const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+function sizeCanvas() { const cv = $("overlay"), r = cv.getBoundingClientRect(); cv.width = Math.max(1, r.width * devicePixelRatio); cv.height = Math.max(1, r.height * devicePixelRatio); }
+window.addEventListener("resize", sizeCanvas);
+let last = performance.now();
+function step(dt) {
+  const a = 1 - Math.exp(-dt / EASE_MS);
+  for (let s = 0; s < 2; s++) {
+    const t = S.target[s];
+    if (t) {
+      if (!S.drawn[s]) S.drawn[s] = { pts: t.pts.map((p) => p.slice()), on: t.on };
+      else { S.drawn[s].pts.forEach((p, i) => { p[0] += (t.pts[i][0] - p[0]) * a; p[1] += (t.pts[i][1] - p[1]) * a; }); S.drawn[s].on = t.on; }
+      S.fade[s] = Math.min(1, S.fade[s] + dt / 120);
+    } else if (S.drawn[s]) {
+      S.fade[s] = Math.max(0, S.fade[s] - dt / 200);
+      if (S.fade[s] === 0) S.drawn[s] = null;
+    }
+  }
+  for (let i = 0; i < 10; i++) S.exprDrawn[i] += ((S.expr[i] || 0) - S.exprDrawn[i]) * Math.min(1, a * 1.5);
+}
+function drawOverlay() {
+  const cv = $("overlay"), g = cv.getContext("2d"), W = cv.width, H = cv.height, dpr = devicePixelRatio;
+  g.clearRect(0, 0, W, H);
+  let iw = W, ih = W / S.aspect; if (ih > H) { ih = H; iw = H * S.aspect; }
+  const ox = (W - iw) / 2, oy = (H - ih) / 2, at = (p) => [ox + p[0] * iw, oy + p[1] * ih];
+  for (let s = 0; s < 2; s++) {
+    const hand = S.drawn[s]; if (!hand) continue;
+    g.globalAlpha = S.fade[s];
+    const tint = s ? [255, 162, 61] : [76, 201, 255], rgb = (c, al) => `rgba(${c[0]},${c[1]},${c[2]},${al})`;
+    g.lineCap = "round"; g.lineJoin = "round";
+    // Soft glow pass, then crisp bones.
+    for (const pass of [0, 1]) {
+      for (const [a, b] of BONES) {
+        const f = b === 0 ? 0 : Math.floor((b - 1) / 4), playing = f > 0 && hand.on[f];
+        const pa = at(hand.pts[a]), pb = at(hand.pts[b]);
+        g.strokeStyle = pass ? (playing ? "#fff3c4" : "rgba(255,255,255,.85)") : (playing ? "rgba(255,226,122,.35)" : rgb(tint, .28));
+        g.lineWidth = (pass ? (playing ? 3.5 : 2.2) : (playing ? 14 : 10)) * dpr;
+        g.beginPath(); g.moveTo(pa[0], pa[1]); g.lineTo(pb[0], pb[1]); g.stroke();
+      }
+    }
+    for (const i of [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19]) {
+      const p = at(hand.pts[i]); g.fillStyle = rgb(tint, .9); g.beginPath(); g.arc(p[0], p[1], 2.4 * dpr, 0, 7); g.fill();
+    }
+    for (let f = 1; f <= 4; f++) {
+      const key = s ? 3 + f : 4 - f, tip = at(hand.pts[4 * f + 4]), playing = hand.on[f];
+      if (playing) { const gl = g.createRadialGradient(tip[0], tip[1], 0, tip[0], tip[1], 26 * dpr); gl.addColorStop(0, "rgba(255,226,122,.7)"); gl.addColorStop(1, "rgba(255,226,122,0)");
+        g.fillStyle = gl; g.beginPath(); g.arc(tip[0], tip[1], 26 * dpr, 0, 7); g.fill(); }
+      g.fillStyle = playing ? "#ffe27a" : rgb(tint, 1); g.beginPath(); g.arc(tip[0], tip[1], (playing ? 6.5 : 4.5) * dpr, 0, 7); g.fill();
+      const label = keyLabel(key);
+      g.font = `700 ${12 * dpr}px -apple-system, "SF Pro Display", sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+      const tw = g.measureText(label).width + 14 * dpr, th = 20 * dpr, lx = tip[0] - tw / 2, ly = tip[1] - 34 * dpr;
+      g.fillStyle = playing ? "rgba(255,226,122,.95)" : "rgba(12,13,15,.78)";
+      g.beginPath(); g.roundRect(lx, ly, tw, th, 10 * dpr); g.fill();
+      g.fillStyle = playing ? "#1a1406" : "#eef0f3"; g.fillText(label, tip[0], ly + th / 2 + .5);
+    }
+    g.globalAlpha = 1;
+  }
+}
+function frame(now) {
+  const dt = Math.min(100, now - last); last = now;
+  step(dt);
+  if ($("play").classList.contains("on")) {
+    drawOverlay();
+    const playing = new Set();
+    for (let s = 0; s < 2; s++) { const h = S.target[s]; if (!h) continue; for (let f = 1; f <= 4; f++) if (h.on[f]) (S.notes[s ? 3 + f : 4 - f] || []).forEach((n) => playing.add(n)); }
+    document.querySelectorAll(".key").forEach((k) => k.classList.toggle("playing", playing.has(+k.dataset.note)));
+    document.querySelectorAll(".pad").forEach((p) => { const k = +p.dataset.key, h = S.target[KEY_SIDE[k]]; p.classList.toggle("playing", !!(h && h.on[KEY_FINGER[k]])); });
+    $("stageHint").style.opacity = S.target[0] || S.target[1] ? 0 : 1;
+  } else {
+    for (let i = 0; i < 10; i++) { const m = $(`meter${i}`), v = S.exprDrawn[i]; m.querySelector("i").style.width = `${v * 100}%`; m.querySelector("em").textContent = Math.round(v * 100); }
+    for (let k = 0; k < SLOTS; k++) {
+      const c = $(`slot${k}`), v = S.exprDrawn[P[`m${k}src`]] || 0;
+      c.querySelector(".now").style.left = `${v * 100}%`;
+      drawCurve(c.querySelector(".curve"), k, v);
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---- demo mode (opened in a browser, no Max) ----------------------------------------------------------------
+function demoPreset(layout) {
+  const keys = [...Array(8)].map((_, k) => [1, k, 0]), chords = [...Array(8)].map((_, k) => [2, k, -1]);
+  const split = [[2,0,-1],[2,3,-1],[2,4,-1],[2,5,-1],[1,0,0],[1,1,0],[1,2,0],[1,4,0]];
+  if (layout < 3) S.table = [keys, chords, split][layout].map((r) => r.slice());
+  demoResolve(); render();
+}
+function demoResolve() {
+  const steps = S.scaleSteps, size = steps.length;
+  const note = (d, o) => { const oc = Math.floor(d / size); return 60 + S.scaleRoot + steps[d - oc * size] + 12 * (oc + o + P.oct); };
+  S.notes = S.table.map(([m, d, o]) => m === 0 ? [] : m === 1 ? [note(d, o)] : [note(d, o), note(d + 2, o), note(d + 4, o)]);
+}
+function demo() {
+  $("dot").className = "dot live"; S.camera = "Demo camera";
+  S.maps[0] = "LP Freq"; S.maps[1] = "Dry/Wet";
+  demoResolve(); render();
+  // A rough open hand: wrist, thumb chain, then four fingers fanning out.
+  const hand = (cx, cy, open, mirror) => {
+    const pts = [[cx, cy + .2]];
+    [[-.07, .15], [-.11, .1], [-.14, .06], [-.16, .02]].forEach(([x, y]) => pts.push([cx + x * mirror, cy + y]));
+    for (let f = 0; f < 4; f++) {
+      const bx = cx + (-.045 + f * .03) * mirror, by = cy + .04, ang = (-.25 + f * .17) * mirror;
+      const len = open[f] ? [0, .07, .115, .15] : [0, .055, .07, .055];
+      len.forEach((l) => pts.push([bx + Math.sin(ang) * l, by - Math.cos(ang) * l * (open[f] ? 1 : .6)]));
+    }
+    return pts;
+  };
+  let t = 0;
+  setInterval(() => {   // 15 fps on purpose: the drawing should still look smooth
+    t += .1;
+    const lo = [Math.sin(t) > 0, Math.sin(t * 1.3) > .3, false, true], ro = [true, Math.sin(t * 2) > 0, false, Math.cos(t) > .5];
+    const L = hand(.32 + Math.sin(t * .5) * .03, .5, lo, 1), R = hand(.68, .46 + Math.cos(t * .7) * .06, ro, -1);
+    S.target = [{ pts: L, on: [false, lo[3], lo[2], lo[1], lo[0]] }, { pts: R, on: [false, ...ro] }];
+    onExpr(.45 + Math.sin(t * .5) * .1, .3, .2, .1, .5, .5 + Math.cos(t * .7) * .3, .7, (Math.sin(t) + 1) / 2, .2, .55);
+    onStats(15, 3.4);
+  }, 66);
+}
+
+// ---- boot --------------------------------------------------------------------------------------------------
+buildKnobs(); buildPads(); buildKeyboard(); buildMeters(); buildSlots(); render(); sizeCanvas(); requestAnimationFrame(frame);
+if (MAX) send("hello"); else demo();
+if (location.hash === "#move") document.querySelector('.tabs button[data-page="move"]').click();
+</script>
+</body>
+</html>

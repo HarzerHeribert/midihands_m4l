@@ -1,15 +1,28 @@
 #include "camera_hub.hpp"
 
+#include <cctype>
+
+#include "preview_server.hpp"
+
 namespace mh {
 
 struct CameraHub::Camera {
   CameraInfo info;
+  std::string stream;     // picture stream name, derived from the uid
   Tracker tracker;
   HandAssigner assigner;  // only touched on the capture thread
   std::mutex dispatch;    // guards everything below; held while calling subscribers
   std::map<long, Callback> subscribers;
-  std::map<long, bool> wantsPreview;
 };
+
+namespace {
+std::string streamName(const std::string& uid) {
+  std::string out;
+  for (char c : uid)
+    if (std::isalnum(static_cast<unsigned char>(c))) out += c;
+  return out.empty() ? "camera" : out;
+}
+}  // namespace
 
 CameraHub& CameraHub::shared() {
   static CameraHub* hub = new CameraHub();  // never destroyed: outlives every instance
@@ -37,6 +50,7 @@ long CameraHub::subscribe(const std::string& camera, Callback callback, std::str
   if (it == cameras_.end()) {
     auto cam = std::make_shared<Camera>();
     cam->info = found;
+    cam->stream = streamName(uid);
     Camera* raw = cam.get();
     const bool ok = cam->tracker.start(
         uid,
@@ -70,7 +84,6 @@ void CameraHub::unsubscribe(long id) {
       // Waits for an in-flight frame, so the callback cannot run after this.
       std::lock_guard<std::mutex> d(it->second->dispatch);
       it->second->subscribers.erase(id);
-      it->second->wantsPreview.erase(id);
       empty = it->second->subscribers.empty();
     }
     if (empty) {
@@ -83,14 +96,12 @@ void CameraHub::unsubscribe(long id) {
   if (stopping) stopping->tracker.stop();
 }
 
-void CameraHub::setPreview(long id, bool enabled) {
+std::string CameraHub::pictureUrl(long id) const {
   std::lock_guard<std::mutex> lock(mutex_);
   auto owner = owners_.find(id);
-  if (owner == owners_.end()) return;
+  if (owner == owners_.end()) return "";
   auto it = cameras_.find(owner->second);
-  if (it == cameras_.end()) return;
-  std::lock_guard<std::mutex> d(it->second->dispatch);
-  it->second->wantsPreview[id] = enabled;
+  return it == cameras_.end() ? "" : PreviewServer::shared().urlFor(it->second->stream);
 }
 
 std::vector<std::pair<std::string, int>> CameraHub::activeCameras() const {
@@ -108,15 +119,18 @@ void CameraHub::onFrame(Camera& cam, const std::vector<Detection>& dets, double 
   HubFrame hf;
   hf.frame = cam.assigner.assign(dets, time, aspect);
   hf.stats = stats;
-  std::lock_guard<std::mutex> d(cam.dispatch);
-  bool preview = false;
-  for (const auto& [id, on] : cam.wantsPreview) preview |= on;
-  if (preview) {
+  {
+    std::lock_guard<std::mutex> d(cam.dispatch);
+    for (const auto& [id, callback] : cam.subscribers) callback(hf);
+  }
+  // The picture costs a downscale and a JPEG encode, so only while an
+  // editor is actually showing this camera.
+  PreviewServer& server = PreviewServer::shared();
+  if (server.hasClients(cam.stream)) {
     const int w = kPreviewWidth;
     const int h = std::max(1, int(w / std::max(0.1f, aspect)));
-    hf.preview = std::make_shared<GrayImage>(mirroredThumbnail(luma, w, h));
+    server.publish(cam.stream, mirroredThumbnail(luma, w, h));
   }
-  for (const auto& [id, callback] : cam.subscribers) callback(hf);
 }
 
 }  // namespace mh

@@ -7,16 +7,18 @@ The patch is described in code so changes are reviewable in git. Run
 Two views:
   strip   the device on the track: hand view, camera on/off and choice,
           and a button that opens the editor
-  editor  a separate, movable window (subpatcher "MidiHands"): camera
-          picture, every setting, movement meters and eight map slots
+  editor  a separate window (subpatcher "MidiHands") showing a web page
+          (package/javascript/mh-editor.html) in a jweb: PLAY (camera,
+          fingers, keyboard, sound) and MOVE (movement meters, map slots)
 
 The two halves talk through device-local send/receive names; Max for Live
 replaces the "---" prefix with an id unique to each device instance:
   ---mh_in       settings and commands -> mh.hands
   ---mh_boot     device finished loading (resend stored settings)
+  ---mh_open     the editor window was opened
   ---mh_expr     ten hand-movement values, every frame
-  ---mh_picture  camera picture (jit_matrix)
-  ---mh_info     status, stats, error
+  ---mh_view     hand drawing data, every frame
+  ---mh_info     status, stats, error, picture url, finger layout
 """
 from __future__ import annotations
 
@@ -34,13 +36,12 @@ NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 MAP_SLOTS = 8
 MAP_DEFAULTS = [5, 7, 0, 3, 6, 9, 1, 4]  # R Height, R Pinch, L Height, L Fist, R X, R Tilt, L X, L Tilt
 
-EDITOR_SIZE = (1210.0, 610.0)
-PICTURE = (16.0, 40.0, 640.0, 360.0)
+EDITOR_SIZE = (1200.0, 760.0)
 
 # (inlets, outlets, outlet types) for object classes used below.
 PORTS = {
     "midiin": (1, 1, ["int"]), "midiout": (1, 0, []), "iter": (1, 1, [""]),
-    "mh.hands": (1, 5, ["list", "list", "", "jit_matrix", ""]),
+    "mh.hands": (1, 4, ["list", "list", "", ""]),
     "live.thisdevice": (1, 3, ["bang", "int", "int"]),
     "prepend": (1, 1, [""]), "pak": (2, 1, [""]), "gate": (2, 1, [""]),
     "==": (2, 1, ["int"]), "/": (2, 1, ["float"]), "+": (2, 1, ["int"]),
@@ -48,7 +49,8 @@ PORTS = {
     "live.remote~": (2, 0, []), "live.path": (1, 3, ["", "", ""]),
     "live.observer": (2, 2, ["", ""]), "pcontrol": (1, 1, [""]),
     "s": (1, 0, []), "r": (0, 1, [""]), "inlet": (0, 1, [""]),
-    "expr": (2, 1, [""]), "change": (1, 3, ["", "int", "int"]),
+    "expr": (2, 1, [""]), "change": (1, 3, ["", "int", "int"]), "thispatcher": (1, 2, ["", ""]),
+    "onebang": (2, 2, ["bang", "bang"]), "absolutepath": (1, 1, [""]),
 }
 
 
@@ -73,7 +75,7 @@ class Patch:
         if name in ("t", "trigger"):
             outs = len(text.split()) - 1
             ports = (1, outs, [""] * outs)
-        elif name in ("route", "sel"):
+        elif name in ("route", "sel", "routepass"):
             outs = len(text.split())
             ports = (2, outs, [""] * outs)
         elif name == "zl":
@@ -173,244 +175,266 @@ class Patch:
         }
 
 
-def setting(p: Patch, src: str, outlet: int, text: str, x: float, y: float, to_hands: str) -> str:
-    """src -> [prepend text] -> mh.hands (through ---mh_in)."""
-    prep = p.obj(f"prepend {text}", x, y)
-    p.connect(src, outlet, prep)
-    p.connect(prep, 0, to_hands)
-    return prep
+# Settings stored as hidden Live parameters. The editor page shows and edits
+# them; Live saves them with the Set, automates the visible ones and shows
+# them on Push. (key, long name, type, lo, hi, initial, visibility, enum)
+# type: "int" | "float" | "enum"; visibility: 0 automatable, 1 stored only.
+def stored_params() -> list[tuple]:
+    params = [
+        ("layout", "Layout", "enum", 0, 3, 2, 0, ["Keys", "Chords", "Split", "Custom"]),
+        ("hands", "Hands", "enum", 0, 2, 0, 0, ["Both", "Left", "Right"]),
+        ("follow", "Follow Live Scale", "enum", 0, 1, 1, 0, ["off", "on"]),
+        ("root", "Root", "enum", 0, 11, 0, 0, NOTES),
+        ("scale", "Scale", "enum", 0, 12, 0, 0, SCALES),
+        ("sens", "Sensitivity", "float", 0, 100, 50.0, 0, None),
+        ("vel", "Velocity", "int", 1, 127, 100, 0, None),
+        ("velmode", "Velocity Mode", "enum", 0, 2, 0, 0, ["Fixed", "Height", "Speed"]),
+        ("oct", "Octave", "int", -3, 3, 0, 0, None),
+        ("minnote", "Min Note Length", "int", 0, 1000, 180, 0, None),
+        ("hold", "Dropout Hold", "int", 0, 2000, 300, 0, None),
+        ("smooth", "Movement Smoothing", "int", 0, 500, 50, 0, None),
+        ("chan", "MIDI Channel", "int", 1, 16, 1, 0, None),
+        ("ccout", "CC Out", "enum", 0, 1, 0, 0, ["off", "on"]),
+        ("ccbase", "CC Base", "int", 0, 118, 20, 0, None),
+    ]
+    split = [(2, 0, -1), (2, 3, -1), (2, 4, -1), (2, 5, -1), (1, 0, 0), (1, 1, 0), (1, 2, 0), (1, 4, 0)]
+    for k, (mode, deg, octv) in enumerate(split):
+        params += [
+            (f"f{k}mode", f"Finger {k + 1} Mode", "enum", 0, 2, mode, 1, ["Off", "Note", "Chord"]),
+            (f"f{k}deg", f"Finger {k + 1} Degree", "int", -14, 21, deg, 1, None),
+            (f"f{k}oct", f"Finger {k + 1} Octave", "int", -3, 3, octv, 1, None),
+        ]
+    for k in range(MAP_SLOTS):
+        params += [
+            (f"m{k}src", f"Map {k + 1} Source", "enum", 0, 9, MAP_DEFAULTS[k], 1, EXPRESSIONS),
+            (f"m{k}lo", f"Map {k + 1} In Low", "float", 0, 1, 0.0, 1, None),
+            (f"m{k}hi", f"Map {k + 1} In High", "float", 0, 1, 1.0, 1, None),
+            (f"m{k}curve", f"Map {k + 1} Curve", "int", -100, 100, 0, 1, None),
+            (f"m{k}min", f"Map {k + 1} Min", "float", 0, 1, 0.0, 0, None),
+            (f"m{k}max", f"Map {k + 1} Max", "float", 0, 1, 1.0, 0, None),
+        ]
+    return params
 
 
-def stored_toggle(p: Patch, toggle: str, x: float, y: float) -> tuple[str, str]:
-    """live.text toggles flip on bang, so their value is kept in [i] for resending.
-    Returns (store, out): bang `store` to resend; `out` carries every value."""
-    store = p.obj("i", x, y)
-    out = p.obj("t i", x, y + 30)
-    p.connect(toggle, 0, store, 1)
-    p.connect(toggle, 0, out)
-    p.connect(store, 0, out)
-    return store, out
+# Settings that go straight to mh.hands: key -> message (sens is scaled first).
+ENGINE_MESSAGES = {
+    "layout": "layout", "hands": "hands", "vel": "velocity", "velmode": "velmode", "oct": "octave",
+    "minnote": "minnote", "hold": "hold", "smooth": "smoothing", "chan": "channel", "ccout": "ccout",
+    "ccbase": "ccbase",
+}
 
 
 def build_editor() -> tuple[Patch, dict]:
     e = Patch()
     W, H = EDITOR_SIZE
-    e.panel([0.0, 0.0, W, H], [0.13, 0.13, 0.13, 1.0])
-    for rect in ([8.0, 8.0, 656.0, H - 16], [672.0, 8.0, 216.0, H - 16], [896.0, 8.0, W - 904, H - 16]):
-        e.panel(rect, [0.17, 0.17, 0.17, 1.0])
+    e.obj("inlet", 20, 10)  # pcontrol in the device opens this window through it
+    to_hands = e.obj("s ---mh_in", 20, 2000)
 
-    inlet = e.obj("inlet", 20, 20)  # for pcontrol; carries nothing
-    to_hands = e.obj("s ---mh_in", 20, 640)
-    boot = e.obj("r ---mh_boot", 300, 20)
-    resend = e.obj("t " + " ".join(["b"] * 30), 300, 50)
-    p_resend = iter(range(30))
+    ui = e._add({
+        "maxclass": "jweb", "numinlets": 1, "numoutlets": 1, "outlettype": [""],
+        "patching_rect": [20.0, 40.0, 300.0, 200.0], "presentation": 1,
+        "presentation_rect": [0.0, 0.0, W, H], "rendermode": 1, "url": "", "varname": "ui",  # 1 = onscreen (fast)
+    })
+
+    # Opening the window: fixed size, and load the page the first time.
+    opened = e.obj("r ---mh_open", 340, 20)
+    open_steps = e.obj("t b b", 340, 50)
+    e.connect(opened, 0, open_steps)
+    # Fixed size, and floating above Live like a plugin window, so clicking a
+    # parameter to map it does not hide the editor.
+    flags = e.msg("window flags nogrow, window flags nozoom, window flags float, window exec", 340, 80)
+    e.connect(open_steps, 1, flags)
+    tp = e.obj("thispatcher", 340, 110)
+    e.connect(flags, 0, tp)
+    once = e.obj("onebang 1", 520, 80)
+    e.connect(open_steps, 0, once)
+    page = e.msg("mh-editor.html", 520, 110)
+    e.connect(once, 0, page)
+    locate = e.obj("absolutepath", 520, 140)
+    e.connect(page, 0, locate)
+    read = e.obj("prepend readfile", 520, 170)
+    e.connect(locate, 0, read)
+    e.connect(read, 0, ui)
+
+    # Live data into the page.
+    for i, name in enumerate(("r ---mh_view", "r ---mh_info")):
+        src = e.obj(name, 340 + 120 * i, 200)
+        e.connect(src, 0, ui)
+    expr_in = e.obj("r ---mh_expr", 600, 200)
+    expr_msg = e.obj("prepend expr", 600, 230)
+    e.connect(expr_in, 0, expr_msg)
+    e.connect(expr_msg, 0, ui)
+
+    # Page commands: set <key> <value>, map <slot>, unmap <slot>, hello.
+    commands = e.obj("route set map unmap hello", 20, 260)
+    e.connect(ui, 0, commands)
+
+    # Stored parameters: hidden live.numbox objects.
+    params = stored_params()
+    keys = [p[0] for p in params]
+    setter = e.obj("route " + " ".join(keys), 20, 300)
+    e.connect(commands, 0, setter)
+    resend = e.obj("t b", 20, 330)
+    boot = e.obj("r ---mh_boot", 120, 330)
     e.connect(boot, 0, resend)
+    hello_steps = e.obj("t b b", 200, 330)
+    e.connect(commands, 3, hello_steps)
+    e.connect(hello_steps, 1, resend)
+    report = e.msg("report", 200, 360)
+    e.connect(hello_steps, 0, report)
+    e.connect(report, 0, to_hands)
 
-    def resend_to(target: str) -> None:
-        e.connect(resend, next(p_resend), target)
+    numbox = {}
+    for n, (key, longname, kind, lo, hi, init, invisible, enum) in enumerate(params):
+        x, y = 20 + (n % 12) * 150, 420 + (n // 12) * 130
+        valueof = {"parameter_initial_enable": 1, "parameter_initial": [init],
+                   "parameter_invisible": invisible}
+        if kind == "enum":
+            valueof.update({"parameter_type": 2, "parameter_enum": enum, "parameter_mmax": len(enum) - 1})
+        else:
+            valueof.update({"parameter_type": 1 if kind == "int" else 0,
+                            "parameter_mmin": float(lo), "parameter_mmax": float(hi), "parameter_unitstyle": 1 if kind == "float" else 0})
+        box = e.param("live.numbox", longname, key, [x, y, 60.0, 15.0], x, y, valueof, (1, 2, ["", "float"]))
+        e.boxes[-1]["box"].pop("presentation")
+        e.boxes[-1]["box"].pop("presentation_rect")
+        numbox[key] = box
+        e.connect(setter, n, box)
+        e.connect(resend, 0, box)
+        echo = e.obj(f"prepend param {key}", x, y + 30)
+        e.connect(box, 0, echo)
+        e.connect(echo, 0, ui)
+        if key in ENGINE_MESSAGES:
+            prep = e.obj(f"prepend {ENGINE_MESSAGES[key]}", x, y + 60)
+            e.connect(box, 0, prep)
+            e.connect(prep, 0, to_hands)
+        elif key == "sens":
+            scale = e.obj("/ 100.", x, y + 60)
+            e.connect(box, 0, scale)
+            prep = e.obj("prepend sensitivity", x, y + 90)
+            e.connect(scale, 0, prep)
+            e.connect(prep, 0, to_hands)
+        elif key[0] == "f" and key[1].isdigit():
+            k, field = key[1], key[2:]
+            msg = {"mode": "fingermode", "deg": "fingerdeg", "oct": "fingeroct"}[field]
+            prep = e.obj(f"prepend {msg} {k}", x, y + 60)
+            e.connect(box, 0, prep)
+            e.connect(prep, 0, to_hands)
 
-    # --- camera picture + status/meters ------------------------------------
-    e.label("CAMERA", [16.0, 14.0, 80.0, 18.0], 12.0)
-    picture_toggle = e.toggle_text("Show Picture", "Picture", "Show Picture", 1,
-                                   [566.0, 14.0, 90.0, 18.0], 20, 60)
-    pic_store, pic_out = stored_toggle(e, picture_toggle, 20, 90)
-    resend_to(pic_store)
-    pic_prep = e.obj("s ---mh_picture_on", 20, 150)
-    e.connect(pic_out, 0, pic_prep)
-    picture_in = e.obj("r ---mh_picture", 120, 60)
-    pwindow = e._add({
-        "maxclass": "jit.pwindow", "numinlets": 1, "numoutlets": 2, "outlettype": ["jit_matrix", ""],
-        "patching_rect": [120, 90, 160, 90], "presentation": 1, "presentation_rect": list(PICTURE),
-        "border": 0.0, "sync": 1,
-    })
-    e.connect(picture_in, 0, pwindow)
-    panel_view = e._add({
-        "maxclass": "v8ui", "filename": "mh-editor.js", "parameter_enable": 0,
-        "numinlets": 1, "numoutlets": 1, "outlettype": [""],
-        "patching_rect": [120, 200, 320, 100],
-        "presentation": 1, "presentation_rect": [16.0, 408.0, 640.0, H - 424],
-    })
-    info_in = e.obj("r ---mh_info", 120, 320)
-    e.connect(info_in, 0, panel_view)
+    # When a preset fills the finger table, store it without echoing back.
+    info_in = e.obj("r ---mh_info", 1900, 20)
+    table = e.obj("route fingertable", 1900, 50)
+    e.connect(info_in, 0, table)
+    unpack = e._add({"maxclass": "newobj", "text": "unpack " + " ".join(["0"] * 24),
+                     "numinlets": 1, "numoutlets": 24, "outlettype": ["int"] * 24,
+                     "patching_rect": [1900, 80, 600, 20]})
+    e.connect(table, 0, unpack)
+    for k in range(8):
+        for j, field in enumerate(("mode", "deg", "oct")):
+            silent = e.obj("prepend set", 1900 + (k * 3 + j) * 70, 110)
+            e.connect(unpack, k * 3 + j, silent)
+            e.connect(silent, 0, numbox[f"f{k}{field}"])
 
-    # --- play -------------------------------------------------------------
-    x0 = 684.0
-    e.label("PLAY", [x0, 14.0, 80.0, 18.0], 12.0)
-    e.label("Layout", [x0, 40.0, 192.0, 15.0])
-    layout = e.tab("Layout", "Layout", ["Keys", "Chords", "Split"], 2, [x0, 56.0, 192.0, 20.0], 500, 60)
-    setting(e, layout, 0, "layout", 500, 90, to_hands)
-    resend_to(layout)
-    e.label("Hands that play notes", [x0, 82.0, 192.0, 15.0])
-    hands = e.tab("Hands", "Hands", ["Both", "Left", "Right"], 0, [x0, 98.0, 192.0, 20.0], 600, 60)
-    setting(e, hands, 0, "hands", 600, 90, to_hands)
-    resend_to(hands)
-
-    e.label("Key", [x0, 124.0, 192.0, 15.0])
-    follow = e.toggle_text("Follow Live Scale", "Live Scale", "Live Scale", 1,
-                           [x0, 140.0, 64.0, 18.0], 700, 60)
-    root = e.menu("Root", "Root", NOTES, 0, [x0 + 68, 140.0, 38.0, 18.0], 800, 60)
-    scale = e.menu("Scale", "Scale", SCALES, 0, [x0 + 110, 140.0, 82.0, 18.0], 880, 60)
-
-    sens = e.dial("Sensitivity", "Sens", 0, 100, 50.0, 5, [x0, 168.0, 44.0, 48.0], 500, 140)
-    sens_scale = e.obj("/ 100.", 500, 200)
-    e.connect(sens, 0, sens_scale)
-    setting(e, sens_scale, 0, "sensitivity", 500, 230, to_hands)
-    resend_to(sens)
-    velocity = e.dial("Velocity", "Velocity", 1, 127, 100, 0, [x0 + 50, 168.0, 44.0, 48.0], 580, 140, integer=True)
-    setting(e, velocity, 0, "velocity", 580, 230, to_hands)
-    resend_to(velocity)
-    e.label("Vel mode", [x0 + 100, 168.0, 92.0, 15.0])
-    velmode = e.menu("Velocity Mode", "Vel Mode", ["Fixed", "Height", "Speed"], 0,
-                     [x0 + 100, 184.0, 92.0, 18.0], 660, 140)
-    setting(e, velmode, 0, "velmode", 660, 230, to_hands)
-    resend_to(velmode)
-    e.label("Octave", [x0 + 100, 206.0, 44.0, 15.0])
-    octave = e.numbox("Octave", "Octave", -3, 3, 0, 0, [x0 + 146, 206.0, 46.0, 16.0], 740, 140)
-    setting(e, octave, 0, "octave", 740, 230, to_hands)
-    resend_to(octave)
-
-    # --- timing -----------------------------------------------------------
-    e.label("TIMING", [x0, 240.0, 120.0, 18.0], 12.0)
-    for k, (longname, shortname, lo, hi, init, msg) in enumerate([
-        ("Min Note Length", "Min Note", 0, 1000, 180.0, "minnote"),
-        ("Dropout Hold", "Hold", 0, 2000, 300.0, "hold"),
-        ("Movement Smoothing", "Smooth", 0, 500, 50.0, "smoothing"),
-    ]):
-        d = e.dial(longname, shortname, lo, hi, init, 2, [x0 + 64 * k, 262.0, 54.0, 48.0], 500 + 80 * k, 280)
-        setting(e, d, 0, msg, 500 + 80 * k, 340, to_hands)
-        resend_to(d)
-
-    # --- midi -------------------------------------------------------------
-    e.label("MIDI", [x0, 324.0, 120.0, 18.0], 12.0)
-    e.label("Channel", [x0, 348.0, 60.0, 15.0])
-    channel = e.numbox("MIDI Channel", "Channel", 1, 16, 1, 0, [x0 + 64, 348.0, 46.0, 16.0], 760, 280)
-    setting(e, channel, 0, "channel", 760, 340, to_hands)
-    resend_to(channel)
-    cc_out = e.toggle_text("CC Out", "CC Out", "Send CC", 0, [x0, 372.0, 60.0, 18.0], 840, 280)
-    cc_store, cc_val = stored_toggle(e, cc_out, 840, 310)
-    setting(e, cc_val, 0, "ccout", 840, 370, to_hands)
-    resend_to(cc_store)
-    e.label("from CC", [x0 + 64, 374.0, 44.0, 15.0])
-    cc_base = e.numbox("CC Base", "CC Base", 0, 118, 20, 0, [x0 + 110, 372.0, 46.0, 16.0], 920, 280)
-    setting(e, cc_base, 0, "ccbase", 920, 340, to_hands)
-    resend_to(cc_base)
-    e.label("Sends the ten movements as CCs, e.g. for MIDI learn.", [x0, 396.0, 196.0, 30.0])
-
-    # --- scale: Live's scale or the manual menus --------------------------
-    root_gate = e.obj("gate 1 1", 800, 110)
-    scale_gate = e.obj("gate 1 1", 880, 110)
-    e.connect(root, 0, root_gate, 1)
-    e.connect(scale, 0, scale_gate, 1)
-    root_prep = e.obj("prepend root", 800, 400)
+    # Key: Live's scale or the manual root/scale settings.
+    root_gate = e.obj("gate 1 1", 1900, 200)
+    scale_gate = e.obj("gate 1 1", 2000, 200)
+    e.connect(numbox["root"], 0, root_gate, 1)
+    e.connect(numbox["scale"], 0, scale_gate, 1)
+    root_prep = e.obj("prepend root", 1900, 400)
     e.connect(root_gate, 0, root_prep)
     e.connect(root_prep, 0, to_hands)
-    scaletype_prep = e.obj("prepend scaletype", 880, 400)
+    scaletype_prep = e.obj("prepend scaletype", 2000, 400)
     e.connect(scale_gate, 0, scaletype_prep)
     e.connect(scaletype_prep, 0, to_hands)
-
-    path_msg = e.msg("path live_set", 1000, 330)
-    lpath = e.obj("live.path", 1000, 360)
+    path_msg = e.msg("path live_set", 2100, 230)
+    lpath = e.obj("live.path", 2100, 260)
     e.connect(path_msg, 0, lpath)
-    wire = e.obj("t b b l", 1000, 390)
+    wire = e.obj("t b b l", 2100, 290)
     e.connect(lpath, 0, wire)
-    obs_root = e.obj("live.observer", 1000, 450)
-    obs_scale = e.obj("live.observer", 1120, 450)
+    obs_root = e.obj("live.observer", 2100, 350)
+    obs_scale = e.obj("live.observer", 2220, 350)
     e.connect(wire, 2, obs_root, 1)
     e.connect(wire, 2, obs_scale, 1)
-    prop_root = e.msg("property root_note", 1000, 420)
-    prop_scale = e.msg("property scale_intervals", 1120, 420)
+    prop_root = e.msg("property root_note", 2100, 320)
+    prop_scale = e.msg("property scale_intervals", 2220, 320)
     e.connect(wire, 1, prop_scale)
     e.connect(wire, 0, prop_root)
     e.connect(prop_root, 0, obs_root)
     e.connect(prop_scale, 0, obs_scale)
-    live_root_gate = e.obj("gate 1 1", 1000, 480)
-    live_scale_gate = e.obj("gate 1 1", 1120, 480)
+    live_root_gate = e.obj("gate 1 1", 2100, 380)
+    live_scale_gate = e.obj("gate 1 1", 2220, 380)
     e.connect(obs_root, 0, live_root_gate, 1)
     e.connect(obs_scale, 0, live_scale_gate, 1)
     e.connect(live_root_gate, 0, root_prep)
-    live_scale_prep = e.obj("prepend scale", 1120, 510)
+    live_scale_prep = e.obj("prepend scale", 2220, 410)
     e.connect(live_scale_gate, 0, live_scale_prep)
     e.connect(live_scale_prep, 0, to_hands)
-
-    follow_store, follow_val = stored_toggle(e, follow, 700, 110)
-    resend_to(follow_store)
-    follow_split = e.obj("t i i", 700, 170)
-    e.connect(follow_val, 0, follow_split)
-    # Right outlet first: set gates, gray out the manual menus.
+    follow_split = e.obj("t i i", 1900, 260)
+    e.connect(numbox["follow"], 0, follow_split)
     e.connect(follow_split, 1, live_root_gate, 0)
     e.connect(follow_split, 1, live_scale_gate, 0)
-    manual = e.obj("== 0", 760, 200)
+    manual = e.obj("== 0", 1960, 290)
     e.connect(follow_split, 1, manual)
     e.connect(manual, 0, root_gate, 0)
     e.connect(manual, 0, scale_gate, 0)
-    active = e.obj("prepend active", 760, 230)
-    e.connect(manual, 0, active)
-    e.connect(active, 0, root)
-    e.connect(active, 0, scale)
-    # Then pull current values from the chosen source.
-    pick = e.obj("sel 1 0", 700, 230)
+    pick = e.obj("sel 1 0", 1900, 320)
     e.connect(follow_split, 0, pick)
     e.connect(pick, 0, path_msg)
-    refresh_menus = e.obj("t b b", 700, 260)
-    e.connect(pick, 1, refresh_menus)
-    e.connect(refresh_menus, 1, scale)
-    e.connect(refresh_menus, 0, root)
+    refresh = e.obj("t b b", 1900, 350)
+    e.connect(pick, 1, refresh)
+    e.connect(refresh, 1, numbox["scale"])
+    e.connect(refresh, 0, numbox["root"])
 
-    # --- map slots ----------------------------------------------------------
-    mx = 908.0
-    e.label("MAP HAND MOVEMENT", [mx, 14.0, 200.0, 18.0], 12.0)
-    e.label("Pick a movement, click Map, then click any parameter in Live.", [mx, 34.0, 290.0, 15.0])
-    e.label("Movement", [mx, 54.0, 76.0, 15.0])
-    e.label("Target", [mx + 80, 54.0, 76.0, 15.0])
-    # Columns follow liveui.map's layout: Map 1-75, X 76-91, Min 92-126, Max 125-159.
-    e.label("Min", [mx + 82 + 96, 54.0, 30.0, 15.0])
-    e.label("Max", [mx + 82 + 129, 54.0, 30.0, 15.0])
-    e.label("Curve", [mx + 252, 54.0, 40.0, 15.0])
-    expr_in = e.obj("r ---mh_expr", 1300, 20)
+    # Map slots: movement -> range/curve -> Live parameter.
+    map_route = e.obj("route " + " ".join(str(k) for k in range(MAP_SLOTS)), 20, 2100)
+    unmap_route = e.obj("route " + " ".join(str(k) for k in range(MAP_SLOTS)), 400, 2100)
+    e.connect(commands, 1, map_route)
+    e.connect(commands, 2, unmap_route)
     for k in range(MAP_SLOTS):
-        y = 72.0 + 30.0 * k
-        bx = 1300 + 170 * k
-        src = e.menu(f"Map {k + 1} Source", f"Src {k + 1}", EXPRESSIONS, MAP_DEFAULTS[k],
-                     [mx, y, 76.0, 18.0], bx, 60)
-        resend_to(src)
-        index = e.obj("+ 1", bx, 90)
-        e.connect(src, 0, index)
-        pick_expr = e.obj("zl nth 1", bx, 120)
+        bx, by = 20 + 230 * k, 2200
+        index = e.obj("+ 1", bx, by)
+        e.connect(numbox[f"m{k}src"], 0, index)
+        pick_expr = e.obj("zl nth 1", bx, by + 30)
         e.connect(index, 0, pick_expr, 1)
         e.connect(expr_in, 0, pick_expr)
-        curve = e.numbox(f"Map {k + 1} Curve", f"Curve {k + 1}", -100, 100, 0, 5,
-                         [mx + 250, y, 40.0, 16.0], bx + 80, 60)
-        resend_to(curve)
-        shaped = e.obj("expr pow($f1\\, pow(2.\\, $f2 / 50.))", bx, 150)
-        e.connect(curve, 0, shaped, 1)
-        e.connect(pick_expr, 0, shaped)
-        ramp = e.msg("$1 20", bx, 180)
-        e.connect(shaped, 0, ramp)
-        line = e.obj("line~", bx, 210)
-        e.connect(ramp, 0, line)
-        mapper = e._add({
-            "maxclass": "bpatcher", "name": "liveui.map.maxpat", "embed": 0,
-            "numinlets": 1, "numoutlets": 2, "outlettype": ["signal", ""],
-            "offset": [0.0, 0.0], "bgmode": 0, "border": 0, "clickthrough": 0,
-            "enablehscroll": 0, "enablevscroll": 0, "lockeddragscroll": 0, "viewvisibility": 1,
-            "patching_rect": [bx, 240, 160, 16],
-            "presentation": 1, "presentation_rect": [mx + 82, y, 160.0, 16.0],
-            "varname": f"map{k + 1}",
+        shape = e._add({
+            "maxclass": "newobj",
+            "text": "expr $f5 + ($f6 - $f5) * pow(min(max(($f1 - $f2) / max($f3 - $f2\\, 0.001)\\, 0.)\\, 1.)\\, pow(2.\\, $f4 / 50.))",
+            "numinlets": 6, "numoutlets": 1, "outlettype": [""],
+            "patching_rect": [bx, by + 60, 220, 20],
         })
-        e.connect(line, 0, mapper)
-        remote = e.obj("live.remote~ @normalized 1", bx, 280)
-        e.connect(mapper, 0, remote, 0)
-        e.connect(mapper, 1, remote, 1)
+        e.connect(pick_expr, 0, shape)
+        for inlet, key in enumerate(("lo", "hi", "curve", "min", "max"), start=1):
+            e.connect(numbox[f"m{k}{key}"], 0, shape, inlet)
+        ramp = e.msg("$1 20", bx, by + 90)
+        e.connect(shape, 0, ramp)
+        line = e.obj("line~", bx, by + 120)
+        e.connect(ramp, 0, line)
+        lmap = e._add({"maxclass": "newobj", "text": "live.map @strict 1", "numinlets": 1, "numoutlets": 5,
+                       "outlettype": ["", "", "", "", ""], "patching_rect": [bx + 80, by + 150, 110, 20]})
+        start_map = e.msg("mapping 1", bx + 80, by + 120)
+        e.connect(map_route, k, start_map)
+        e.connect(start_map, 0, lmap)
+        clear = e.msg("unmap", bx + 160, by + 120)
+        e.connect(unmap_route, k, clear)
+        e.connect(clear, 0, lmap)
+        remote = e.obj("live.remote~ @normalized 1", bx, by + 180)
+        e.connect(line, 0, remote, 0)
+        e.connect(lmap, 1, remote, 1)
+        # Remember the target name so a reopened page can be told again.
+        name_store = e.obj("zl reg", bx + 80, by + 180)
+        e.connect(lmap, 2, name_store)
+        e.connect(resend, 0, name_store)
+        name_msg = e.obj(f"prepend mapname {k}", bx + 80, by + 210)
+        e.connect(name_store, 0, name_msg)
+        e.connect(name_msg, 0, ui)
+        state_msg = e.obj(f"prepend mapping {k}", bx + 160, by + 210)
+        e.connect(lmap, 3, state_msg)
+        e.connect(state_msg, 0, ui)
 
-    # Meters get the same values, prefixed so the v8ui knows what they are.
-    expr_msg = e.obj("prepend expr", 1300, 340)
-    e.connect(expr_in, 0, expr_msg)
-    e.connect(expr_msg, 0, panel_view)
-
-    _ = inlet
     window = [80.0, 80.0, W, H]  # x, y, width, height
     return e, e.patcher(window, toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,
-                        title="MidiHands")
+                        title="MidiHands", bgcolor=[0.07, 0.075, 0.08, 1.0],
+                        editing_bgcolor=[0.07, 0.075, 0.08, 1.0])
 
 
 def build() -> dict:
@@ -430,8 +454,8 @@ def build() -> dict:
 
     expr_out = p.obj("s ---mh_expr", 100, 460)
     p.connect(hands, 1, expr_out)
-    picture_out = p.obj("s ---mh_picture", 300, 460)
-    p.connect(hands, 3, picture_out)
+    view_out = p.obj("s ---mh_view", 300, 460)
+    p.connect(hands, 2, view_out)
 
     # --- strip: hand view + camera ---------------------------------------
     view = p._add({
@@ -441,9 +465,13 @@ def build() -> dict:
         "presentation": 1, "presentation_rect": [4.0, 6.0, 230.0, 156.0],
     })
     info = p.obj("route cameras", 420, 420)
-    p.connect(hands, 4, info)
+    p.connect(hands, 3, info)
     p.connect(hands, 2, view)
-    p.connect(info, 1, view)  # status, stats, error
+    view_info = p.obj("routepass status stats error", 420, 450)  # all the strip view draws
+    p.connect(info, 1, view_info)
+    p.connect(view_info, 0, view)
+    p.connect(view_info, 1, view)
+    p.connect(view_info, 2, view)
     info_out = p.obj("s ---mh_info", 520, 460)
     p.connect(info, 1, info_out)
 
@@ -485,7 +513,7 @@ def build() -> dict:
         "fontsize": 12.0, "patching_rect": [200, 80, 90, 30],
         "presentation": 1, "presentation_rect": [x0, 34.0, 196.0, 44.0],
     })
-    p.label("Settings, camera picture and\nmapping open in their own window.", [x0, 84.0, 196.0, 30.0])
+    p.label("Play and Move settings, camera\npicture and mapping open here.", [x0, 84.0, 196.0, 30.0])
     open_msg = p.msg("open", 200, 120)
     p.connect(open_button, 0, open_msg)
     pcontrol = p.obj("pcontrol", 200, 150)
@@ -498,24 +526,8 @@ def build() -> dict:
     })
     p.connect(pcontrol, 0, editor_box)
 
-    # The picture is rendered once the editor has been opened and "Show
-    # Picture" is on; before that nobody can see it.
-    opened = p.obj("i", 300, 150)
-    one = p.msg("1", 300, 120)
-    p.connect(open_button, 0, one)
-    p.connect(one, 0, opened)
-    picture_on = p.obj("r ---mh_picture_on", 380, 90)
-    picture_split = p.obj("t b i", 380, 120)
-    p.connect(picture_on, 0, picture_split)
-    both = p.obj("expr $i1 && $i2", 300, 210)
-    p.connect(opened, 0, both)
-    p.connect(picture_split, 1, both, 1)
-    p.connect(picture_split, 0, opened)  # re-evaluate with the new toggle value
-    changed = p.obj("change", 300, 240)
-    p.connect(both, 0, changed)
-    preview = p.obj("prepend preview", 300, 270)
-    p.connect(changed, 0, preview)
-    p.connect(preview, 0, hands)
+    opened = p.obj("s ---mh_open", 300, 120)
+    p.connect(open_button, 0, opened)
 
     params = {**p.params, **editor.params, "inherited_shortname": 1}
     patcher = p.patcher([40.0, 80.0, 1500.0, 700.0], openrect=[0.0, 0.0, 0.0, 169.0],

@@ -36,22 +36,31 @@ ln "$PWD/device/MidiHands.amxd" "$HOME/Music/Ableton/User Library/Presets/MIDI E
 ## Using the device
 
 The device on the track is the compact view: the hand view, the camera switch and camera
-choice, and **Open Editor**. The editor is a separate window you can move anywhere (another
-monitor works well). Closing it does not stop anything.
+choice, and **Open Editor**. The editor is a separate window that floats above Live like a
+plugin window. Closing it does not stop anything.
 
-| Editor section | What it does |
-|---|---|
-| Camera | Live camera picture with both hands drawn on it (left blue, right orange, playing fingers yellow). "Show Picture" turns it off |
-| Movement | Live meters for the ten hand movements (height, x, pinch, fist, tilt of each hand) |
-| Layout | **Split**: left hand plays chords I, IV, V, vi (pinky → index); right hand plays melody notes. **Keys**: eight fingers are eight scale notes, left pinky to right pinky. **Chords**: same as Keys, but every finger plays a triad |
-| Hands that play notes | Both, left only, or right only (see "Several devices") |
-| Key | **Live Scale** follows the Set's root and scale (Live 12). Turn it off to pick root and scale here |
-| Sens / Velocity / Vel mode / Octave | Trigger sensitivity, fixed velocity or velocity from hand height or finger speed, octave shift |
-| Timing | Minimum note length, how long notes survive a tracking dropout, movement smoothing |
-| MIDI | Channel, and **Send CC**: the ten movements as CCs starting at "from CC" |
-| Map hand movement | Eight slots: pick a movement, click Map, click any parameter in Live. Min/Max set the range, Curve bends the response |
+**PLAY**
+- The camera picture with both hands drawn on it. Every fingertip is labelled with what it
+  plays and lights up while it plays.
+- Eight pads, one per finger (thumbs never play): click a pad to edit it, then choose Off /
+  Note / Chord, its scale degree and octave, or simply click a key on the keyboard.
+- Layout presets: **Keys** (eight scale notes), **Chords** (eight triads), **Split** (left
+  hand chords I, IV, V, vi; right hand melody). Editing any pad switches to **Custom**.
+- Sound: sensitivity, velocity (fixed, from hand height or finger speed), octave.
+- Key: follows the Set's root and scale (Live 12), or your own.
+- Hands that play: both, left only, or right only (see "Several devices").
+- Timing & MIDI: minimum note length, dropout hold, movement smoothing, MIDI channel, and
+  sending the ten movements as CCs.
 
-A finger plays while it is straightened and stops when it bends. Thumbs never play notes.
+**MOVE**
+- Live meters for the ten hand movements (height, x, pinch, fist, tilt of each hand).
+- Eight map slots. **Learn** watches you for three seconds, picks the movement you made and
+  fits the input range to how far you moved; then click any parameter in Live. Or pick the
+  movement yourself and press **Map**. Each slot has input and output ranges and a curve
+  (drag it up or down).
+
+Every setting is a Live parameter, saved with the Set; the main ones (layout, hands, scale,
+sensitivity, velocity, map min/max…) can be automated.
 
 ## Several devices, several cameras
 
@@ -61,20 +70,23 @@ Live:
 - Each camera that at least one device has switched on runs **one** detection. Devices on
   the same camera get the exact same hands, so they never disagree.
 - A second camera only starts when some device picks it, and stops when no device uses it.
+- The camera picture in the editor is streamed over the loopback interface (127.0.0.1)
+  and only encoded while an editor shows it.
 - Each device keeps its own settings. For example: piano track = left hand, Chords; synth
   track = right hand, Keys.
 
 ## How it is built
 
 ```
-core/     portable C++17: filters, finger features, hand sides, scales, note bookkeeping,
-          engine, camera-picture rendering
-mac/      macOS only: AVFoundation camera + Apple Vision hand pose (tracker), and the
-          shared backend that runs one pipeline per active camera (camera_hub)
+core/     portable C++17: filters, finger features, hand sides, scales, finger slots and
+          presets, note bookkeeping, engine, camera-picture thumbnails
+mac/      macOS only: AVFoundation camera + Apple Vision hand pose (tracker), the shared
+          backend that runs one pipeline per active camera (camera_hub), and a loopback
+          MJPEG server for the editor's camera picture (preview_server)
 max/      the mh.hands Max external (one per device, subscribes to the shared backend)
 device/   build_device.py generates MidiHands.amxd (never edit the .amxd by hand)
-package/  Max package: externals/ (built), javascript/mh-view.js (hand view on the
-          track) and mh-editor.js (status and movement meters in the editor)
+package/  Max package: externals/ (built), javascript/mh-view.js (hand view on the track)
+          and mh-editor.html (the editor window, shown by a jweb object)
 tools/    mh command-line tool: list cameras, replay recorded clips, live timing
 tests/    core unit tests
 ```
@@ -103,12 +115,12 @@ mark arrival at the Mac, so sensor exposure and transport delay are not included
 ./build/mh cameras
 ./build/mh replay clips/*.mp4 --phases corpus.yaml
 ./build/mh live "My Camera" --seconds 10 --instances 3   # three engines, one shared camera
-./build/mh snapshot clip.mp4 480 frame.png                # render the editor's camera picture
+./build/mh snapshot clip.mp4 480 frame.png                # render a camera picture with hands
 ```
 
 ## Shipping a build
 
 Open the device in Live's Max editor and click **Freeze**: this embeds the external and the
-view scripts so the single `.amxd` works without `make install`. After rebuilding the
+view scripts and the editor page so the single `.amxd` works without `make install`. After rebuilding the
 external, restart Live: Max loads a native object once per session. For other people's Macs the
 external also has to be signed with a Developer ID and notarized.

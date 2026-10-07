@@ -12,7 +12,24 @@
 
 namespace mh {
 
-enum Layout { Keys = 0, Chords = 1, Split = 2 };
+enum Layout { Keys = 0, Chords = 1, Split = 2, Custom = 3 };
+enum FingerMode { FingerOff = 0, FingerNote = 1, FingerChord = 2 };
+
+// What one finger plays. Degree counts scale steps from the root (0 = root,
+// 7 = root an octave up in a 7-note scale); octave shifts on top of that.
+struct FingerSlot {
+  int mode = FingerNote;
+  int degree = 0;
+  int octave = 0;
+  bool operator==(const FingerSlot& o) const { return mode == o.mode && degree == o.degree && octave == o.octave; }
+  bool operator!=(const FingerSlot& o) const { return !(*this == o); }
+};
+
+// The eight playing fingers as keys, left to right in the mirrored view:
+// 0-3 = left pinky, ring, middle, index; 4-7 = right index, middle, ring, pinky.
+constexpr int kKeys = 8;
+int keyPosition(Side side, int finger);
+std::array<FingerSlot, kKeys> presetSlots(int layout);
 enum VelocityMode { VelocityFixed = 0, VelocityHeight = 1, VelocitySpeed = 2 };
 enum HandsUsed { BothHands = 0, LeftHandOnly = 1, RightHandOnly = 2 };
 
@@ -23,7 +40,8 @@ extern const char* const kExprNames[kExpr];
 struct Params {
   bool notes = true;            // play notes from fingers
   int hands = BothHands;        // which hands play notes on this instance
-  int layout = Split;
+  int layout = Split;           // which preset filled `fingers`, or Custom
+  std::array<FingerSlot, kKeys> fingers = presetSlots(Split);
   Scale scale;
   int octave = 0;
   int velocityMode = VelocityFixed;
@@ -57,6 +75,9 @@ class Engine {
   Output process(const Frame& raw);
   void panic(std::vector<MidiEvent>& out);
 
+  // Notes a key (see keyPosition) plays with the current settings.
+  std::vector<int> notesForKey(int key) const;
+
   // Finger extension (1 = straight) that the note gates compare against.
   static float extension(const HandFeatures& f, int finger) { return 1.f - f.curl[finger]; }
 
@@ -71,7 +92,6 @@ class Engine {
     std::vector<int> notes;
   };
 
-  std::vector<int> notesFor(Side side, int finger) const;
   int velocityFor(const HandFeatures& f, const FingerState& fs) const;
   void releaseFinger(int owner, FingerState& fs, double now);
   void resetFingers();

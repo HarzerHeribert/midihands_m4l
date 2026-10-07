@@ -178,8 +178,10 @@ int cmdLive(const std::string& camera, double seconds, int instances) {
     }
     all.push_back(std::move(inst));
   }
-  std::printf("camera: %s %dx%d @ %.0f fps, %d instance(s), %zu camera pipeline(s)\n", info.name.c_str(), info.width,
-              info.height, info.fps, instances, CameraHub::shared().activeCameras().size());
+  std::printf("camera: %s %dx%d @ %.0f fps, %d instance(s), %zu camera pipeline(s)\npicture: %s\n", info.name.c_str(),
+              info.width, info.height, info.fps, instances, CameraHub::shared().activeCameras().size(),
+              CameraHub::shared().pictureUrl(all[0]->id).c_str());
+  std::fflush(stdout);
   std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
   for (auto& inst : all) CameraHub::shared().unsubscribe(inst->id);
   std::lock_guard<std::mutex> lock(mutex);

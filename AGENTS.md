@@ -24,5 +24,11 @@ Read README.md first.
   device instance). Instances never open cameras themselves.
 - The strip and the editor window talk through `---mh_*` send/receive names (listed at the
   top of `device/build_device.py`). Every Live parameter lives in exactly one of the two views.
+- The editor is `package/javascript/mh-editor.html` in a jweb. Its settings are hidden
+  live.numbox parameters defined in `stored_params()` in the generator; the page and the
+  patch exchange `set <key> <value>` / `param <key> <value>` (protocol at the top of the
+  HTML). Adding a setting means: a row in `stored_params()`, a key in the page's `P`, and,
+  if the engine needs it, an entry in `ENGINE_MESSAGES` plus handling in `mh.hands`.
+- Open the page in a browser to work on the UI: without Max it runs a demo.
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
 - Work on `main`; this is a solo project.

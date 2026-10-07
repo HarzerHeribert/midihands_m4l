@@ -12,13 +12,34 @@ namespace {
 
 constexpr float kGateWidth = 0.12f;
 
-// Fingers are laid out like keys from the performer's left to right:
-// left pinky, ring, middle, index | right index, middle, ring, pinky.
+}  // namespace
+
 int keyPosition(Side side, int finger) {
   return side == Left ? Pinky - finger : 4 + (finger - Index);
 }
 
-}  // namespace
+std::array<FingerSlot, kKeys> presetSlots(int layout) {
+  std::array<FingerSlot, kKeys> slots{};
+  for (int k = 0; k < kKeys; ++k) {
+    switch (layout) {
+      case Keys:
+        slots[k] = {FingerNote, k, 0};
+        break;
+      case Chords:
+        slots[k] = {FingerChord, k, -1};
+        break;
+      case Split:
+      default: {
+        // Left hand: I, IV, V, vi chords (pinky to index).
+        // Right hand: root, 2nd, 3rd, 5th melody notes (index to pinky).
+        static constexpr int chordDegrees[4] = {0, 3, 4, 5};
+        static constexpr int melodyDegrees[4] = {0, 1, 2, 4};
+        slots[k] = k < 4 ? FingerSlot{FingerChord, chordDegrees[k], -1} : FingerSlot{FingerNote, melodyDegrees[k - 4], 0};
+      }
+    }
+  }
+  return slots;
+}
 
 Engine::Engine() {
   lastSeen_.fill(-1e9);
@@ -31,22 +52,17 @@ Engine::Engine() {
   }
 }
 
-std::vector<int> Engine::notesFor(Side side, int finger) const {
-  const int key = keyPosition(side, finger);
-  switch (p_.layout) {
-    case Keys:
-      return {degreeToNote(key, p_.scale, p_.octave)};
-    case Chords:
-      return diatonicChord(key, p_.scale, p_.octave - 1);
-    case Split:
-    default: {
-      // Left hand: I, IV, V, vi chords (pinky to index).
-      // Right hand: root, 2nd, 3rd, 5th melody notes (index to pinky).
-      static constexpr int chordDegrees[4] = {0, 3, 4, 5};
-      static constexpr int melodyDegrees[4] = {0, 1, 2, 4};
-      if (side == Left) return diatonicChord(chordDegrees[key], p_.scale, p_.octave - 1);
-      return {degreeToNote(melodyDegrees[key - 4], p_.scale, p_.octave)};
-    }
+std::vector<int> Engine::notesForKey(int key) const {
+  if (key < 0 || key >= kKeys) return {};
+  const FingerSlot& slot = p_.fingers[key];
+  const int octave = p_.octave + slot.octave;
+  switch (slot.mode) {
+    case FingerNote:
+      return {degreeToNote(slot.degree, p_.scale, octave)};
+    case FingerChord:
+      return diatonicChord(slot.degree, p_.scale, octave);
+    default:
+      return {};
   }
 }
 
@@ -76,7 +92,7 @@ void Engine::resetFingers() {
 }
 
 void Engine::setParams(const Params& p, std::vector<MidiEvent>& out) {
-  const bool repitch = p.layout != p_.layout || !(p.scale == p_.scale) || p.octave != p_.octave ||
+  const bool repitch = p.fingers != p_.fingers || !(p.scale == p_.scale) || p.octave != p_.octave ||
                        p.channel != p_.channel || p.notes != p_.notes || p.hands != p_.hands;
   if (repitch) panic(out);
   if (p.ccOut != p_.ccOut || p.ccBase != p_.ccBase) lastCc_.fill(-1);
@@ -137,7 +153,7 @@ Output Engine::process(const Frame& raw) {
         fs.on = true;
         fs.onAt = now;
         fs.pendingOff = false;
-        fs.notes = notesFor(side, finger);
+        fs.notes = notesForKey(keyPosition(side, finger));
         const int velocity = velocityFor(f, fs);
         for (int n : fs.notes) book_.claim(owner, n, velocity, p_.channel, now, out.midi);
       } else if (gate && fs.on) {

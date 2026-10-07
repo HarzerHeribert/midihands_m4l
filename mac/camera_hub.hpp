@@ -20,14 +20,12 @@ namespace mh {
 struct HubFrame {
   Frame frame;  // hands sorted into left/right, unfiltered
   TrackerStats stats;
-  // Camera picture, only while some subscriber asked for previews.
-  std::shared_ptr<const GrayImage> preview;
 };
 
 class CameraHub {
  public:
   using Callback = std::function<void(const HubFrame&)>;
-  static constexpr int kPreviewWidth = 640;
+  static constexpr int kPreviewWidth = 640;  // camera picture streamed to editors
 
   static CameraHub& shared();
 
@@ -37,7 +35,8 @@ class CameraHub {
   // After this returns the subscriber's callback is not running and never
   // will again. Stops the camera if nobody else uses it.
   void unsubscribe(long id);
-  void setPreview(long id, bool enabled);
+  // Address of the subscriber's camera picture (MJPEG over loopback), or "".
+  std::string pictureUrl(long id) const;
   // Number of cameras currently running, and instances on each (for status).
   std::vector<std::pair<std::string, int>> activeCameras() const;
 

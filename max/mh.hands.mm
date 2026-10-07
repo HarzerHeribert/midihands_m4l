@@ -9,23 +9,27 @@
 // Threads:
 //   capture thread   shared detection, then this instance's engine
 //   scheduler thread a clock flushes MIDI and expression values (timing-critical)
-//   main thread      a qelem sends drawing data, the camera picture and status
+//   main thread      qelems send drawing data, status and the finger layout
 //
 // Inlet messages (all from the device patch):
-//   open [camera index | name], close, cameras, panic, preview 0/1
-//   notes 0/1, hands 0-2, layout 0-2, octave n, velmode 0-2, velocity 1-127,
+//   open [camera index | name], close, cameras, panic
+//   notes 0/1, hands 0-2, layout 0-3, octave n, velmode 0-2, velocity 1-127,
 //   sensitivity 0-1, minnote ms, hold ms, smoothing ms, channel 1-16,
-//   ccout 0/1, ccbase n, root 0-11, scaletype index, scale <intervals...>
+//   ccout 0/1, ccbase n, root 0-11, scaletype index, scale <intervals...>,
+//   finger <key 0-7> <mode 0-2> <degree> <octave>, or one field at a time:
+//   fingermode|fingerdeg|fingeroct <key> <value>
+//   "layout 0-2" loads that preset into the finger table; 3 (custom) keeps it.
+//   report: resend status, picture and finger layout (an editor page opened)
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
 //   1 expression values: 10 floats 0-1 (see kExprNames)
-//   2 drawing data for the hand view: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
-//   3 camera picture with hands drawn on it: "jit_matrix <name>" (only while preview is on)
-//   4 info: cameras, status, stats, error
+//   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
+//   3 info: cameras, status, stats, error, picture <url>,
+//      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
+//      scaleinfo <root> <intervals...>
 #include "ext.h"
 #include "ext_obex.h"
-#include "jit.common.h"
 
 #include <memory>
 #include <mutex>
@@ -34,7 +38,6 @@
 #include <vector>
 
 #include "../core/engine.hpp"
-#include "../core/preview.hpp"
 #include "../mac/camera_hub.hpp"
 
 namespace {
@@ -71,8 +74,10 @@ struct State {
   bool exprFresh = false;
   mh::Output view;
   mh::TrackerStats stats;
-  std::shared_ptr<const mh::GrayImage> preview;
-  bool previewFresh = false;
+  // Main thread only: what was last reported, to skip unchanged layouts.
+  std::string lastLayout;
+  mh::CameraInfo camera;
+  int cameraUsers = 0;
 };
 
 }  // namespace
@@ -82,19 +87,14 @@ typedef struct _mh_hands {
   void* outMidi;
   void* outExpr;
   void* outView;
-  void* outPreview;
   void* outInfo;
   t_clock* flushClock;
   t_qelem* viewQelem;
+  t_qelem* layoutQelem;
   t_qelem* accessQelem;
   t_symbol* pendingCamera;
   long pendingCameraIndex;
   long subscription;  // CameraHub subscriber id, 0 while closed
-  bool previewOn;
-  void* matrix;  // jit_matrix for the camera picture, created on first use
-  t_symbol* matrixName;
-  long matrixWidth;
-  long matrixHeight;
   State* st;
 } t_mh_hands;
 
@@ -141,57 +141,14 @@ static void mh_flush(t_mh_hands* x) {
   }
 }
 
-// Main thread. Jitter is loaded by the editor's jit.pwindow, so the matrix
-// is only created once previews are actually requested.
-static bool mh_ensureMatrix(t_mh_hands* x, long width, long height) {
-  if (x->matrix && x->matrixWidth == width && x->matrixHeight == height) return true;
-  t_jit_matrix_info info;
-  jit_matrix_info_default(&info);
-  info.type = gensym("char");
-  info.planecount = 4;
-  info.dimcount = 2;
-  info.dim[0] = width;
-  info.dim[1] = height;
-  if (x->matrix) {
-    jit_object_method(x->matrix, gensym("setinfo"), &info);
-  } else {
-    void* m = jit_object_new(gensym("jit_matrix"), &info);
-    if (!m) return false;
-    x->matrixName = jit_symbol_unique();
-    x->matrix = jit_object_method(m, gensym("register"), x->matrixName);
-  }
-  x->matrixWidth = width;
-  x->matrixHeight = height;
-  return x->matrix != nullptr;
-}
-
-static void mh_sendPreview(t_mh_hands* x, const mh::GrayImage& gray, const mh::Output& view) {
-  if (gray.width <= 0 || !mh_ensureMatrix(x, gray.width, gray.height)) return;
-  void* saved = jit_object_method(x->matrix, gensym("lock"), reinterpret_cast<void*>(1));
-  t_jit_matrix_info info;
-  jit_object_method(x->matrix, gensym("getinfo"), &info);
-  char* data = nullptr;
-  jit_object_method(x->matrix, gensym("getdata"), &data);
-  if (data) mh::renderPreview(gray, view.frame, view.fingerOn, reinterpret_cast<uint8_t*>(data), int(info.dimstride[1]));
-  jit_object_method(x->matrix, gensym("lock"), saved);
-  if (!data) return;
-  t_atom a;
-  atom_setsym(&a, x->matrixName);
-  outlet_anything(x->outPreview, gensym("jit_matrix"), 1, &a);
-}
-
-// Main thread: hand drawing data, camera picture and timing stats, coalesced
-// by the qelem.
+// Main thread: hand drawing data and timing stats, coalesced by the qelem.
 static void mh_view(t_mh_hands* x) {
   mh::Output view;
   mh::TrackerStats stats;
-  std::shared_ptr<const mh::GrayImage> preview;
   {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     view = x->st->view;
     stats = x->st->stats;
-    if (x->st->previewFresh) preview = x->st->preview;
-    x->st->previewFresh = false;
   }
   t_atom a[kViewFloats];
   int n = 0;
@@ -207,14 +164,58 @@ static void mh_view(t_mh_hands* x) {
   }
   outlet_anything(x->outView, gensym("hands"), n, a);
 
-  if (preview && x->previewOn) mh_sendPreview(x, *preview, view);
-
   t_atom s[3];
   atom_setfloat(s, stats.fps);
   atom_setfloat(s + 1, stats.detectMs);
   atom_setfloat(s + 2, stats.latencyMs);
   mh_info(x, "stats", 3, s);
 }
+
+// Main thread: what every finger plays, for the editor's labels, keyboard
+// and stored finger parameters.
+static void mh_layoutOut(t_mh_hands* x, bool force) {
+  mh::Params p;
+  std::vector<std::vector<int>> notes;
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    p = x->st->engine.params();
+    for (int k = 0; k < mh::kKeys; ++k) notes.push_back(x->st->engine.notesForKey(k));
+  }
+  // Reporting the table makes the patch store it, which comes back as
+  // settings; only speaking up on real changes keeps that from looping.
+  std::string key;
+  for (int k = 0; k < mh::kKeys; ++k) {
+    key += std::to_string(p.fingers[k].mode) + "," + std::to_string(p.fingers[k].degree) + "," +
+           std::to_string(p.fingers[k].octave) + ":";
+    for (int n : notes[k]) key += std::to_string(n) + ",";
+  }
+  key += "|" + std::to_string(p.scale.root);
+  for (int i = 0; i < p.scale.size; ++i) key += "," + std::to_string(p.scale.intervals[i]);
+  if (!force && key == x->st->lastLayout) return;
+  x->st->lastLayout = key;
+
+  t_atom table[mh::kKeys * 3];
+  for (int k = 0; k < mh::kKeys; ++k) {
+    atom_setlong(table + k * 3, p.fingers[k].mode);
+    atom_setlong(table + k * 3 + 1, p.fingers[k].degree);
+    atom_setlong(table + k * 3 + 2, p.fingers[k].octave);
+  }
+  mh_info(x, "fingertable", mh::kKeys * 3, table);
+
+  t_atom resolved[mh::kKeys * 5];
+  for (int k = 0; k < mh::kKeys; ++k) {
+    atom_setlong(resolved + k * 5, static_cast<long>(notes[k].size()));
+    for (int i = 0; i < 4; ++i) atom_setlong(resolved + k * 5 + 1 + i, i < int(notes[k].size()) ? notes[k][i] : -1);
+  }
+  mh_info(x, "fingers", mh::kKeys * 5, resolved);
+
+  std::vector<t_atom> scale(1 + p.scale.size);
+  atom_setlong(scale.data(), p.scale.root);
+  for (int i = 0; i < p.scale.size; ++i) atom_setlong(scale.data() + 1 + i, p.scale.intervals[i]);
+  mh_info(x, "scaleinfo", static_cast<long>(scale.size()), scale.data());
+}
+
+static void mh_layout(t_mh_hands* x) { mh_layoutOut(x, false); }
 
 // Settings can arrive on the main or the scheduler thread, so every edit
 // happens under the lock together with handing the result to the engine.
@@ -227,6 +228,7 @@ static void mh_edit(t_mh_hands* x, Edit edit) {
     x->st->engine.setParams(x->st->params, x->st->pendingMidi);
   }
   clock_fdelay(x->flushClock, 0.0);
+  qelem_set(x->layoutQelem);
 }
 
 static void mh_cameras(t_mh_hands* x) {
@@ -248,13 +250,45 @@ static void mh_stop(t_mh_hands* x) {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     x->st->engine.panic(x->st->pendingMidi);
     x->st->view = mh::Output{};
-    x->st->preview.reset();
   }
   clock_fdelay(x->flushClock, 0.0);
   qelem_set(x->viewQelem);
   t_atom a;
   atom_setsym(&a, gensym("stopped"));
   mh_info(x, "status", 1, &a);
+}
+
+static void mh_status(t_mh_hands* x) {
+  if (!x->subscription) {
+    t_atom a;
+    atom_setsym(&a, gensym("stopped"));
+    mh_info(x, "status", 1, &a);
+    return;
+  }
+  const mh::CameraInfo& info = x->st->camera;
+  int users = 1;
+  for (const auto& [name, count] : mh::CameraHub::shared().activeCameras())
+    if (name == info.name) users = count;
+  t_atom a[6];
+  atom_setsym(a, gensym("running"));
+  atom_setsym(a + 1, gensym(info.name.c_str()));
+  atom_setlong(a + 2, info.width);
+  atom_setlong(a + 3, info.height);
+  atom_setfloat(a + 4, info.fps);
+  atom_setlong(a + 5, users);
+  mh_info(x, "status", 6, a);
+
+  const std::string url = mh::CameraHub::shared().pictureUrl(x->subscription);
+  if (!url.empty()) {
+    t_atom u;
+    atom_setsym(&u, gensym(url.c_str()));
+    mh_info(x, "picture", 1, &u);
+  }
+}
+
+static void mh_report(t_mh_hands* x) {
+  mh_status(x);
+  mh_layoutOut(x, true);
 }
 
 static void mh_start(t_mh_hands* x) {
@@ -303,10 +337,6 @@ static void mh_start(t_mh_hands* x) {
           st->expr = out.expr;
           st->exprFresh = true;
           st->stats = hf.stats;
-          if (hf.preview) {
-            st->preview = hf.preview;
-            st->previewFresh = true;
-          }
           out.midi.clear();
           st->view = std::move(out);
         }
@@ -318,19 +348,8 @@ static void mh_start(t_mh_hands* x) {
     mh_error(x, error);
     return;
   }
-  mh::CameraHub::shared().setPreview(x->subscription, x->previewOn);
-
-  int users = 1;
-  for (const auto& [name, count] : mh::CameraHub::shared().activeCameras())
-    if (name == info.name) users = count;
-  t_atom a[6];
-  atom_setsym(a, gensym("running"));
-  atom_setsym(a + 1, gensym(info.name.c_str()));
-  atom_setlong(a + 2, info.width);
-  atom_setlong(a + 3, info.height);
-  atom_setfloat(a + 4, info.fps);
-  atom_setlong(a + 5, users);
-  mh_info(x, "status", 6, a);
+  x->st->camera = info;
+  mh_status(x);
 }
 
 static void mh_open(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
@@ -343,17 +362,40 @@ static void mh_open(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
 
 static void mh_close(t_mh_hands* x) { mh_stop(x); }
 
-static void mh_preview(t_mh_hands* x, long on) {
-  x->previewOn = on != 0;
-  if (x->subscription) mh::CameraHub::shared().setPreview(x->subscription, x->previewOn);
-}
-
 static void mh_panic(t_mh_hands* x) {
   {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     x->st->engine.panic(x->st->pendingMidi);
   }
   clock_fdelay(x->flushClock, 0.0);
+}
+
+static void mh_finger(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  if (argc < 4) {
+    object_error(reinterpret_cast<t_object*>(x), "finger needs: key mode degree octave");
+    return;
+  }
+  const int key = static_cast<int>(atom_getlong(argv));
+  if (key < 0 || key >= mh::kKeys) return;
+  const mh::FingerSlot slot{std::clamp(static_cast<int>(atom_getlong(argv + 1)), 0, 2),
+                            std::clamp(static_cast<int>(atom_getlong(argv + 2)), -14, 21),
+                            std::clamp(static_cast<int>(atom_getlong(argv + 3)), -3, 3)};
+  mh_edit(x, [&](mh::Params& p, std::vector<int>&) { p.fingers[key] = slot; });
+}
+
+// fingermode / fingerdeg / fingeroct <key> <value>
+static void mh_fingerField(t_mh_hands* x, t_symbol* s, long argc, t_atom* argv) {
+  if (argc < 2) return;
+  const int key = static_cast<int>(atom_getlong(argv));
+  const int value = static_cast<int>(atom_getlong(argv + 1));
+  if (key < 0 || key >= mh::kKeys) return;
+  const std::string field = s->s_name;
+  mh_edit(x, [&](mh::Params& p, std::vector<int>&) {
+    mh::FingerSlot& slot = p.fingers[key];
+    if (field == "fingermode") slot.mode = std::clamp(value, 0, 2);
+    else if (field == "fingerdeg") slot.degree = std::clamp(value, -14, 21);
+    else slot.octave = std::clamp(value, -3, 3);
+  });
 }
 
 static void mh_scale(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
@@ -375,7 +417,10 @@ static void mh_anything(t_mh_hands* x, t_symbol* s, long argc, t_atom* argv) {
   mh_edit(x, [&](mh::Params& p, std::vector<int>& scaleSteps) {
     if (name == "notes") p.notes = i != 0;
     else if (name == "hands") p.hands = std::clamp(i, 0, 2);
-    else if (name == "layout") p.layout = std::clamp(i, 0, 2);
+    else if (name == "layout") {
+      p.layout = std::clamp(i, 0, 3);
+      if (p.layout != mh::Custom) p.fingers = mh::presetSlots(p.layout);
+    }
     else if (name == "octave") p.octave = std::clamp(i, -4, 4);
     else if (name == "velmode") p.velocityMode = std::clamp(i, 0, 2);
     else if (name == "velocity") p.velocity = std::clamp(i, 1, 127);
@@ -397,33 +442,28 @@ static void mh_anything(t_mh_hands* x, t_symbol* s, long argc, t_atom* argv) {
 
 static void mh_assist(t_mh_hands*, void*, long io, long index, char* text) {
   if (io == ASSIST_INLET) {
-    std::snprintf(text, 256, "open, close, cameras, panic, preview, settings");
+    std::snprintf(text, 256, "open, close, cameras, panic, finger, settings");
     return;
   }
   static const char* outlets[] = {"MIDI bytes (to midiout)", "Expressions: L height x pinch fist tilt, R ...",
-                                  "Hand view data", "Camera picture (jit_matrix)",
-                                  "Info: cameras, status, stats, error"};
-  std::snprintf(text, 256, "%s", outlets[std::clamp<long>(index, 0, 4)]);
+                                  "Hand view data", "Info: cameras, status, stats, error, picture, fingers"};
+  std::snprintf(text, 256, "%s", outlets[std::clamp<long>(index, 0, 3)]);
 }
 
 static void* mh_new(t_symbol*, long, t_atom*) {
   t_mh_hands* x = static_cast<t_mh_hands*>(object_alloc(mh_class));
   if (!x) return nullptr;
   x->outInfo = outlet_new(x, nullptr);
-  x->outPreview = outlet_new(x, "jit_matrix");
   x->outView = outlet_new(x, nullptr);
   x->outExpr = listout(x);
   x->outMidi = listout(x);
   x->flushClock = clock_new(x, reinterpret_cast<method>(mh_flush));
   x->viewQelem = qelem_new(x, reinterpret_cast<method>(mh_view));
+  x->layoutQelem = qelem_new(x, reinterpret_cast<method>(mh_layout));
   x->accessQelem = qelem_new(x, reinterpret_cast<method>(mh_start));
   x->pendingCamera = gensym("");
   x->pendingCameraIndex = -1;
   x->subscription = 0;
-  x->previewOn = false;
-  x->matrix = nullptr;
-  x->matrixName = nullptr;
-  x->matrixWidth = x->matrixHeight = 0;
   x->st = new State();
   std::lock_guard<std::mutex> lock(gAliveMutex);
   gAlive.insert(x);
@@ -438,8 +478,8 @@ static void mh_free(t_mh_hands* x) {
   if (x->subscription) mh::CameraHub::shared().unsubscribe(x->subscription);  // no callbacks after this
   qelem_free(x->accessQelem);
   qelem_free(x->viewQelem);
+  qelem_free(x->layoutQelem);
   object_free(x->flushClock);
-  if (x->matrix) jit_object_free(x->matrix);
   // Notes still sounding are cut by Live when the device goes away.
   delete x->st;
 }
@@ -451,7 +491,10 @@ void ext_main(void*) {
   class_addmethod(c, reinterpret_cast<method>(mh_close), "close", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_cameras), "cameras", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_panic), "panic", 0);
-  class_addmethod(c, reinterpret_cast<method>(mh_preview), "preview", A_LONG, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_finger), "finger", A_GIMME, 0);
+  for (const char* field : {"fingermode", "fingerdeg", "fingeroct"})
+    class_addmethod(c, reinterpret_cast<method>(mh_fingerField), field, A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_report), "report", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_scale), "scale", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_anything), "anything", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_assist), "assist", A_CANT, 0);

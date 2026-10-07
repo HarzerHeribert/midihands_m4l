@@ -155,6 +155,7 @@ TEST(open_hand_plays_and_fist_releases_after_min_length) {
   Engine engine;
   Params p;
   p.layout = Keys;
+  p.fingers = presetSlots(Keys);
   std::vector<MidiEvent> ignored;
   engine.setParams(p, ignored);
   const auto open = makeHand(0.7f, 0.5f, kOpen);
@@ -173,6 +174,7 @@ TEST(brief_dropout_holds_notes_long_dropout_releases) {
   Engine engine;
   Params p;
   p.layout = Keys;
+  p.fingers = presetSlots(Keys);
   std::vector<MidiEvent> ignored;
   engine.setParams(p, ignored);
   const auto open = makeHand(0.7f, 0.5f, kOpen);
@@ -267,6 +269,7 @@ TEST(hands_setting_limits_notes_to_one_side) {
   Engine engine;
   Params p;
   p.layout = Keys;
+  p.fingers = presetSlots(Keys);
   p.hands = LeftHandOnly;
   std::vector<MidiEvent> ignored;
   engine.setParams(p, ignored);
@@ -297,6 +300,35 @@ TEST(preview_is_mirrored_and_draws_hands) {
   bool colored = false;
   for (size_t i = 0; i < argb.size(); i += 4) colored |= argb[i + 1] != argb[i + 3];  // r != b
   CHECK(colored);
+}
+
+TEST(presets_lay_out_fingers_left_to_right) {
+  const auto keys = presetSlots(Keys);
+  for (int k = 0; k < kKeys; ++k) CHECK(keys[k].mode == FingerNote && keys[k].degree == k);
+  const auto split = presetSlots(Split);
+  CHECK(split[0].mode == FingerChord && split[0].degree == 0);  // left pinky: I
+  CHECK(split[3].degree == 5);                                   // left index: vi
+  CHECK(split[4].mode == FingerNote && split[4].degree == 0);   // right index: root
+  CHECK(keyPosition(Left, Pinky) == 0 && keyPosition(Left, Index) == 3);
+  CHECK(keyPosition(Right, Index) == 4 && keyPosition(Right, Pinky) == 7);
+}
+
+TEST(custom_finger_slots_play_what_they_say) {
+  Engine engine;
+  Params p;
+  p.layout = Custom;
+  p.fingers = presetSlots(Keys);
+  p.fingers[4] = {FingerChord, 3, 0};  // right index: IV chord
+  p.fingers[5] = {FingerOff, 0, 0};    // right middle: silent
+  p.fingers[6] = {FingerNote, 2, 1};   // right ring: 3rd, one octave up
+  std::vector<MidiEvent> out;
+  engine.setParams(p, out);
+  CHECK((engine.notesForKey(4) == std::vector<int>{65, 69, 72}));  // F A C
+  CHECK(engine.notesForKey(5).empty());
+  CHECK((engine.notesForKey(6) == std::vector<int>{76}));
+  const auto open = makeHand(0.7f, 0.5f, kOpen);
+  Output o = engine.process(frameWith(0.0, nullptr, &open));
+  CHECK(count(o.midi, 0x90) == 3 + 0 + 1 + 1);  // chord + off + note + pinky note
 }
 
 int main() {
