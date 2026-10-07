@@ -36,14 +36,23 @@ ln "$PWD/device/MidiHands.amxd" "$HOME/Music/Ableton/User Library/Presets/MIDI E
 ## Using the device
 
 The device on the track is the compact view: the hand view, the camera switch and camera
-choice, and **Open Editor**. The editor is a separate window that floats above Live like a
-plugin window. Closing it does not stop anything.
+choice, **Open Editor**, and two master switches:
+
+- **Notes**: fingers play notes. Off releases sounding notes and keeps everything silent.
+- **Movement**: map slots drive their Live parameters and CCs go out. Off lets go of every
+  mapped parameter, so it can be turned by hand and its automation plays again.
+
+Both are Live parameters: automate them, or MIDI-map them to a footswitch. The editor shows
+them too. The editor is a separate window in Live's own look that floats above Live like a
+plugin window; closing it does not stop anything. The line at its bottom explains whatever
+the mouse is over.
 
 **PLAY**
 - The camera picture with both hands drawn on it. Every fingertip is labelled with what it
   plays and lights up while it plays.
 - Eight pads, one per finger (thumbs never play): click a pad to edit it, then choose Off /
-  Note / Chord, its scale degree and octave, or simply click a key on the keyboard.
+  Note / Chord, its scale degree (each button shows the note or chord it gives) and octave,
+  or simply click a key on the keyboard. Every choice is a single click.
 - Layout presets: **Keys** (eight scale notes), **Chords** (eight triads), **Split** (left
   hand chords I, IV, V, vi; right hand melody). Editing any pad switches to **Custom**.
 - Sound: sensitivity, velocity (fixed, from hand height or finger speed), octave.
@@ -56,8 +65,8 @@ plugin window. Closing it does not stop anything.
 - Live meters for the ten hand movements (height, x, pinch, fist, tilt of each hand).
 - Eight map slots. **Learn** watches you for three seconds, picks the movement you made and
   fits the input range to how far you moved; then click any parameter in Live. Or pick the
-  movement yourself and press **Map**. Each slot has input and output ranges and a curve
-  (drag it up or down).
+  movement yourself and press **Map**. Each slot has an **On** switch (automatable; off lets
+  go of the parameter), input and output ranges and a curve (drag it up or down).
 
 Every setting is a Live parameter, saved with the Set; the main ones (layout, hands, scale,
 sensitivity, velocity, map min/max…) can be automated.
@@ -121,6 +130,7 @@ mark arrival at the Mac, so sensor exposure and transport delay are not included
 ## Shipping a build
 
 Open the device in Live's Max editor and click **Freeze**: this embeds the external and the
-view scripts and the editor page so the single `.amxd` works without `make install`. After rebuilding the
+view script. The editor page is loaded by name at runtime, so check that a frozen device still
+finds `mh-editor.html` without the package installed (not tested yet). After rebuilding the
 external, restart Live: Max loads a native object once per session. For other people's Macs the
 external also has to be signed with a Developer ID and notarized.

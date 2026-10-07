@@ -16,6 +16,9 @@ class PreviewServer {
 
   // Starts the server on first use. Empty string if it could not start.
   std::string urlFor(const std::string& stream);
+  // http://127.0.0.1:<port>; also serves /font/<file> from the host app's
+  // bundled fonts (Live's Ableton Sans) so the editor can match Live.
+  std::string baseUrl();
   bool hasClients(const std::string& stream) const;
   // Encodes and sends one frame to every client of `stream` that is ready.
   void publish(const std::string& stream, const GrayImage& image);

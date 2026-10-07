@@ -19,13 +19,13 @@
 //   finger <key 0-7> <mode 0-2> <degree> <octave>, or one field at a time:
 //   fingermode|fingerdeg|fingeroct <key> <value>
 //   "layout 0-2" loads that preset into the finger table; 3 (custom) keeps it.
-//   report: resend status, picture and finger layout (an editor page opened)
+//   report: resend assets url, status, picture and finger layout (an editor page opened)
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
 //   1 expression values: 10 floats 0-1 (see kExprNames)
 //   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
-//   3 info: cameras, status, stats, error, picture <url>,
+//   3 info: cameras, status, stats, error, picture <url>, assets <url> (Live's fonts),
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
 //      scaleinfo <root> <intervals...>
 #include "ext.h"
@@ -39,6 +39,7 @@
 
 #include "../core/engine.hpp"
 #include "../mac/camera_hub.hpp"
+#include "../mac/preview_server.hpp"
 
 namespace {
 
@@ -287,6 +288,12 @@ static void mh_status(t_mh_hands* x) {
 }
 
 static void mh_report(t_mh_hands* x) {
+  const std::string assets = mh::PreviewServer::shared().baseUrl();
+  if (!assets.empty()) {
+    t_atom a;
+    atom_setsym(&a, gensym(assets.c_str()));
+    mh_info(x, "assets", 1, &a);
+  }
   mh_status(x);
   mh_layoutOut(x, true);
 }

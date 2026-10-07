@@ -19,6 +19,10 @@ replaces the "---" prefix with an id unique to each device instance:
   ---mh_expr     ten hand-movement values, every frame
   ---mh_view     hand drawing data, every frame
   ---mh_info     status, stats, error, picture url, finger layout
+  ---mh_page     strip parameters shown in the editor page ("param notes 1")
+  ---mh_move     Movement switch (0/1), gates map slots and CC out
+  ---mh_notes_set, ---mh_move_set   the page flips a strip switch
+  ---mh_strip_report                the page opened: strip switches resend
 """
 from __future__ import annotations
 
@@ -178,7 +182,8 @@ class Patch:
 # Settings stored as hidden Live parameters. The editor page shows and edits
 # them; Live saves them with the Set, automates the visible ones and shows
 # them on Push. (key, long name, type, lo, hi, initial, visibility, enum)
-# type: "int" | "float" | "enum"; visibility: 0 automatable, 1 stored only.
+# type: "int" | "float" | "ms" | "enum"; visibility: 0 automatable, 1 stored only.
+# Max for Live int parameters span at most 256 steps, so wider ranges are floats.
 def stored_params() -> list[tuple]:
     params = [
         ("layout", "Layout", "enum", 0, 3, 2, 0, ["Keys", "Chords", "Split", "Custom"]),
@@ -190,9 +195,9 @@ def stored_params() -> list[tuple]:
         ("vel", "Velocity", "int", 1, 127, 100, 0, None),
         ("velmode", "Velocity Mode", "enum", 0, 2, 0, 0, ["Fixed", "Height", "Speed"]),
         ("oct", "Octave", "int", -3, 3, 0, 0, None),
-        ("minnote", "Min Note Length", "int", 0, 1000, 180, 0, None),
-        ("hold", "Dropout Hold", "int", 0, 2000, 300, 0, None),
-        ("smooth", "Movement Smoothing", "int", 0, 500, 50, 0, None),
+        ("minnote", "Min Note Length", "ms", 0, 1000, 180.0, 0, None),
+        ("hold", "Dropout Hold", "ms", 0, 2000, 300.0, 0, None),
+        ("smooth", "Movement Smoothing", "ms", 0, 500, 50.0, 0, None),
         ("chan", "MIDI Channel", "int", 1, 16, 1, 0, None),
         ("ccout", "CC Out", "enum", 0, 1, 0, 0, ["off", "on"]),
         ("ccbase", "CC Base", "int", 0, 118, 20, 0, None),
@@ -206,6 +211,7 @@ def stored_params() -> list[tuple]:
         ]
     for k in range(MAP_SLOTS):
         params += [
+            (f"m{k}on", f"Map {k + 1} On", "enum", 0, 1, 1, 0, ["off", "on"]),
             (f"m{k}src", f"Map {k + 1} Source", "enum", 0, 9, MAP_DEFAULTS[k], 1, EXPRESSIONS),
             (f"m{k}lo", f"Map {k + 1} In Low", "float", 0, 1, 0.0, 1, None),
             (f"m{k}hi", f"Map {k + 1} In High", "float", 0, 1, 1.0, 1, None),
@@ -219,8 +225,7 @@ def stored_params() -> list[tuple]:
 # Settings that go straight to mh.hands: key -> message (sens is scaled first).
 ENGINE_MESSAGES = {
     "layout": "layout", "hands": "hands", "vel": "velocity", "velmode": "velmode", "oct": "octave",
-    "minnote": "minnote", "hold": "hold", "smooth": "smoothing", "chan": "channel", "ccout": "ccout",
-    "ccbase": "ccbase",
+    "minnote": "minnote", "hold": "hold", "smooth": "smoothing", "chan": "channel", "ccbase": "ccbase",
 }
 
 
@@ -272,14 +277,21 @@ def build_editor() -> tuple[Patch, dict]:
     # Stored parameters: hidden live.numbox objects.
     params = stored_params()
     keys = [p[0] for p in params]
+    strip_keys = e.obj("route notes move", 20, 280)  # master switches live on the strip
+    e.connect(commands, 0, strip_keys)
+    for i, name in enumerate(("s ---mh_notes_set", "s ---mh_move_set")):
+        e.connect(strip_keys, i, e.obj(name, 160 + 130 * i, 280))
     setter = e.obj("route " + " ".join(keys), 20, 300)
-    e.connect(commands, 0, setter)
+    e.connect(strip_keys, 2, setter)
     resend = e.obj("t b", 20, 330)
     boot = e.obj("r ---mh_boot", 120, 330)
     e.connect(boot, 0, resend)
     hello_steps = e.obj("t b b", 200, 330)
     e.connect(commands, 3, hello_steps)
     e.connect(hello_steps, 1, resend)
+    e.connect(resend, 0, e.obj("s ---mh_strip_report", 120, 360))
+    e.connect(e.obj("r ---mh_page", 600, 170), 0, ui)
+    move_in = e.obj("r ---mh_move", 800, 170)
     report = e.msg("report", 200, 360)
     e.connect(hello_steps, 0, report)
     e.connect(report, 0, to_hands)
@@ -293,7 +305,8 @@ def build_editor() -> tuple[Patch, dict]:
             valueof.update({"parameter_type": 2, "parameter_enum": enum, "parameter_mmax": len(enum) - 1})
         else:
             valueof.update({"parameter_type": 1 if kind == "int" else 0,
-                            "parameter_mmin": float(lo), "parameter_mmax": float(hi), "parameter_unitstyle": 1 if kind == "float" else 0})
+                            "parameter_mmin": float(lo), "parameter_mmax": float(hi),
+                            "parameter_unitstyle": {"int": 0, "float": 1, "ms": 2}[kind]})
         box = e.param("live.numbox", longname, key, [x, y, 60.0, 15.0], x, y, valueof, (1, 2, ["", "float"]))
         e.boxes[-1]["box"].pop("presentation")
         e.boxes[-1]["box"].pop("presentation_rect")
@@ -319,6 +332,16 @@ def build_editor() -> tuple[Patch, dict]:
             prep = e.obj(f"prepend {msg} {k}", x, y + 60)
             e.connect(box, 0, prep)
             e.connect(prep, 0, to_hands)
+
+    # CC out only while Movement is on.
+    cc_pak = e.obj("pak 0 0", 1700, 420)
+    e.connect(numbox["ccout"], 0, cc_pak, 0)
+    e.connect(move_in, 0, cc_pak, 1)
+    cc_both = e.obj("expr $i1 && $i2", 1700, 450)
+    e.connect(cc_pak, 0, cc_both)
+    cc_msg = e.obj("prepend ccout", 1700, 480)
+    e.connect(cc_both, 0, cc_msg)
+    e.connect(cc_msg, 0, to_hands)
 
     # When a preset fills the finger table, store it without echoing back.
     info_in = e.obj("r ---mh_info", 1900, 20)
@@ -419,7 +442,30 @@ def build_editor() -> tuple[Patch, dict]:
         e.connect(clear, 0, lmap)
         remote = e.obj("live.remote~ @normalized 1", bx, by + 180)
         e.connect(line, 0, remote, 0)
-        e.connect(lmap, 1, remote, 1)
+        # A slot drives its parameter only while Movement and the slot are on.
+        # Off detaches live.remote~ (id 0), so the parameter can be turned by
+        # hand and its automation plays; on re-attaches the stored mapping.
+        target_id = e.obj("zl reg", bx, by + 240)
+        e.connect(lmap, 1, target_id)
+        attach = e.obj("gate 1 0", bx, by + 270)
+        e.connect(target_id, 0, attach, 1)
+        e.connect(attach, 0, remote, 1)
+        on_pak = e.obj("pak 0 0", bx, by + 300)
+        e.connect(move_in, 0, on_pak, 0)
+        e.connect(numbox[f"m{k}on"], 0, on_pak, 1)
+        on_both = e.obj("expr $i1 && $i2", bx, by + 330)
+        e.connect(on_pak, 0, on_both)
+        on_change = e.obj("change -1", bx, by + 360)
+        e.connect(on_both, 0, on_change)
+        on_steps = e.obj("t i i", bx, by + 390)
+        e.connect(on_change, 0, on_steps)
+        e.connect(on_steps, 1, attach, 0)
+        on_pick = e.obj("sel 1 0", bx, by + 420)
+        e.connect(on_steps, 0, on_pick)
+        e.connect(on_pick, 0, target_id)
+        detach = e.msg("id 0", bx + 60, by + 450)
+        e.connect(on_pick, 1, detach)
+        e.connect(detach, 0, remote, 1)
         # Remember the target name so a reopened page can be told again.
         name_store = e.obj("zl reg", bx + 80, by + 180)
         e.connect(lmap, 2, name_store)
@@ -433,8 +479,8 @@ def build_editor() -> tuple[Patch, dict]:
 
     window = [80.0, 80.0, W, H]  # x, y, width, height
     return e, e.patcher(window, toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,
-                        title="MidiHands", bgcolor=[0.07, 0.075, 0.08, 1.0],
-                        editing_bgcolor=[0.07, 0.075, 0.08, 1.0])
+                        title="MidiHands", bgcolor=[0.141, 0.141, 0.141, 1.0],
+                        editing_bgcolor=[0.141, 0.141, 0.141, 1.0])
 
 
 def build() -> dict:
@@ -513,7 +559,25 @@ def build() -> dict:
         "fontsize": 12.0, "patching_rect": [200, 80, 90, 30],
         "presentation": 1, "presentation_rect": [x0, 34.0, 196.0, 44.0],
     })
-    p.label("Play and Move settings, camera\npicture and mapping open here.", [x0, 84.0, 196.0, 30.0])
+    # Master switches: notes from fingers, movement to mapped parameters and CC.
+    for i, (longname, key, msg) in enumerate((("Notes", "notes", "notes"), ("Movement", "move", None))):
+        tog = p.toggle_text(longname, longname, longname, 1, [x0 + 100.0 * i, 84.0, 96.0, 22.0], 800 + 160 * i, 80)
+        if msg:
+            to_engine = p.obj(f"prepend {msg}", 800 + 160 * i, 110)
+            p.connect(tog, 0, to_engine)
+            p.connect(to_engine, 0, hands)
+        else:
+            p.connect(tog, 0, p.obj("s ---mh_move", 800 + 160 * i, 110))
+        # Tell the page; an opened page asks again. A bang would flip the
+        # toggle, so the report repeats a stored copy instead.
+        echo = p.obj(f"prepend param {key}", 800 + 160 * i, 140)
+        p.connect(tog, 0, echo)
+        p.connect(echo, 0, p.obj("s ---mh_page", 800 + 160 * i, 170))
+        last = p.obj("i", 900 + 160 * i, 110)
+        p.connect(tog, 0, last, 1)
+        p.connect(p.obj("r ---mh_strip_report", 900 + 160 * i, 80), 0, last)
+        p.connect(last, 0, echo)
+        p.connect(p.obj(f"r ---mh_{key}_set", 800 + 160 * i, 50), 0, tog)
     open_msg = p.msg("open", 200, 120)
     p.connect(open_button, 0, open_msg)
     pcontrol = p.obj("pcontrol", 200, 150)

@@ -85,6 +85,29 @@ struct PreviewServer::Impl {
                   clients.end());
   }
 
+  // GET /font/<file>: a font from the host app's bundle (Live's
+  // Contents/App-Resources/Fonts). Plain file names only.
+  bool serveFont(nw_connection_t connection, const std::string& request) {
+    const std::string prefix = "GET /font/";
+    if (request.compare(0, prefix.size(), prefix) != 0) return false;
+    const size_t end = request.find(' ', prefix.size());
+    const std::string name = request.substr(prefix.size(), end == std::string::npos ? std::string::npos : end - prefix.size());
+    NSData* data = nil;
+    const bool safe = !name.empty() && name.find('/') == std::string::npos && name.find("..") == std::string::npos &&
+                      (name.size() > 4 && (name.substr(name.size() - 4) == ".ttf" || name.substr(name.size() - 4) == ".otf"));
+    if (safe) {
+      NSString* dir = [[NSBundle mainBundle].bundlePath stringByAppendingPathComponent:@"Contents/App-Resources/Fonts"];
+      data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:[NSString stringWithUTF8String:name.c_str()]]];
+    }
+    const std::string head = data ? "HTTP/1.1 200 OK\r\nContent-Type: font/ttf\r\nContent-Length: " + std::to_string(data.length) +
+                                         "\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: max-age=86400\r\nConnection: close\r\n\r\n"
+                                   : "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n";
+    dispatch_data_t out = dataFrom(head);
+    if (data) out = dispatch_data_create_concat(out, dispatch_data_create(data.bytes, data.length, nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT));
+    nw_connection_send(connection, out, NW_CONNECTION_FINAL_MESSAGE_CONTEXT, true, ^(nw_error_t) { nw_connection_cancel(connection); });
+    return true;
+  }
+
   void accept(nw_connection_t connection) {
     auto client = std::make_shared<Client>();
     client->connection = connection;
@@ -106,6 +129,7 @@ struct PreviewServer::Impl {
                               request.append(static_cast<const char*>(buf), size);
                               return true;
                             });
+                            if (serveFont(connection, request)) return;
                             const size_t a = request.find("/cam/"), b = request.find(".mjpg");
                             if (a == std::string::npos || b == std::string::npos || b < a) {
                               nw_connection_send(connection, dataFrom("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"),
@@ -137,6 +161,11 @@ PreviewServer::PreviewServer() : impl_(std::make_unique<Impl>()) {}
 std::string PreviewServer::urlFor(const std::string& stream) {
   if (!impl_->start()) return "";
   return "http://127.0.0.1:" + std::to_string(impl_->port) + "/cam/" + stream + ".mjpg";
+}
+
+std::string PreviewServer::baseUrl() {
+  if (!impl_->start()) return "";
+  return "http://127.0.0.1:" + std::to_string(impl_->port);
 }
 
 bool PreviewServer::hasClients(const std::string& stream) const {
