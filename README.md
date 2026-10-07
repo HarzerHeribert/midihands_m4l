@@ -13,6 +13,8 @@ camera and Apple's Vision hand-pose model on the Neural Engine/GPU.
 - Ableton Live 12 Suite, or Standard with Max for Live
 - A camera. Frame rate matters more than resolution: a 60 fps camera (for example an iPhone
   via Continuity Camera) roughly halves the camera's share of the latency compared with 30 fps.
+  Light matters too: webcams lower their frame rate in dim rooms (a 30 fps webcam ran at
+  15 fps at night). The device shows the live frame rate under the hand view.
 
 ## Build and install
 
@@ -23,6 +25,13 @@ make install                  # links package/ into ~/Documents/Max 9/Packages/m
 ```
 
 Then drag `device/MidiHands.amxd` onto a MIDI track. On first use, Live asks for camera access.
+
+To find it in Live's browser, hard-link it into the User Library (Live ignores symlinks there;
+a hard link stays in sync with every `make device`):
+
+```bash
+ln "$PWD/device/MidiHands.amxd" "$HOME/Music/Ableton/User Library/Presets/MIDI Effects/Max MIDI Effect/"
+```
 
 ## Using the device
 
