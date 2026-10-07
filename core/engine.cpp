@@ -77,7 +77,7 @@ void Engine::resetFingers() {
 
 void Engine::setParams(const Params& p, std::vector<MidiEvent>& out) {
   const bool repitch = p.layout != p_.layout || !(p.scale == p_.scale) || p.octave != p_.octave ||
-                       p.channel != p_.channel || p.notes != p_.notes;
+                       p.channel != p_.channel || p.notes != p_.notes || p.hands != p_.hands;
   if (repitch) panic(out);
   if (p.ccOut != p_.ccOut || p.ccBase != p_.ccBase) lastCc_.fill(-1);
   for (auto& s : smooth_) s.timeConstantMs = p.smoothingMs;
@@ -126,7 +126,8 @@ Output Engine::process(const Frame& raw) {
           fs.speed += 0.5f * (inst - fs.speed);
         }
         if (hand.present) fs.lastExt = ext;
-        gate = fs.gate.apply(ext, threshold, kGateWidth) && p_.notes;
+        const bool sideOn = p_.hands == BothHands || (p_.hands == LeftHandOnly) == (side == Left);
+        gate = fs.gate.apply(ext, threshold, kGateWidth) && p_.notes && sideOn;
       } else {
         fs.gate.reset();
         fs.speed = 0.f;

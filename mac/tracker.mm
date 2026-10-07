@@ -41,6 +41,16 @@ double hostSeconds() {
   return double(mach_absolute_time()) * tb.numer / tb.denom / 1e9;
 }
 
+// Plane 0 of the 420v frames is luma; the caller must hold the base address lock.
+LumaView lumaOf(CVPixelBufferRef pixels) {
+  LumaView v;
+  v.data = static_cast<const uint8_t*>(CVPixelBufferGetBaseAddressOfPlane(pixels, 0));
+  v.width = int(CVPixelBufferGetWidthOfPlane(pixels, 0));
+  v.height = int(CVPixelBufferGetHeightOfPlane(pixels, 0));
+  v.stride = int(CVPixelBufferGetBytesPerRowOfPlane(pixels, 0));
+  return v;
+}
+
 VNDetectHumanHandPoseRequest* makeRequest() {
   VNDetectHumanHandPoseRequest* request = [[VNDetectHumanHandPoseRequest alloc] init];
   request.maximumHandCount = 2;
@@ -168,7 +178,9 @@ CameraInfo describe(AVCaptureDevice* device) {
 
   const float aspect = float(CVPixelBufferGetWidth(pixels)) / float(std::max<size_t>(1, CVPixelBufferGetHeight(pixels)));
   std::vector<mh::Detection> hands = error ? std::vector<mh::Detection>{} : mh::toDetections(_request.results);
-  _callback(hands, frameTime, aspect, stats);
+  CVPixelBufferLockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
+  _callback(hands, frameTime, aspect, stats, mh::lumaOf(pixels));
+  CVPixelBufferUnlockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
 }
 
 @end
@@ -313,9 +325,10 @@ CameraInfo Tracker::camera() const {
   return impl_->camera;
 }
 
-bool processMovie(const std::string& path,
-                  const std::function<void(const std::vector<Detection>&, double, float, double)>& cb,
-                  std::string* error) {
+bool processMovie(
+    const std::string& path,
+    const std::function<void(const std::vector<Detection>&, double, float, double, const LumaView&)>& cb,
+    std::string* error) {
   @autoreleasepool {
     NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
     AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url options:nil];
@@ -348,7 +361,9 @@ bool processMovie(const std::string& path,
         [handler performRequests:@[ request ] onCVPixelBuffer:pixels orientation:kCGImagePropertyOrientationUp error:nil];
         const double ms = (hostSeconds() - t0) * 1000.0;
         const float aspect = float(CVPixelBufferGetWidth(pixels)) / float(std::max<size_t>(1, CVPixelBufferGetHeight(pixels)));
-        cb(toDetections(request.results), time, aspect, ms);
+        CVPixelBufferLockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
+        cb(toDetections(request.results), time, aspect, ms, lumaOf(pixels));
+        CVPixelBufferUnlockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
       }
       CFRelease(sample);
     }

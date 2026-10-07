@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../core/hands.hpp"
+#include "../core/preview.hpp"
 
 namespace mh {
 
@@ -32,8 +33,9 @@ struct TrackerStats {
   double latencyMs = 0.0;  // frame timestamp to landmarks ready
 };
 
-using DetectionCallback =
-    std::function<void(const std::vector<Detection>& hands, double time, float aspect, const TrackerStats& stats)>;
+// `luma` points into the camera frame and is only valid during the call.
+using DetectionCallback = std::function<void(const std::vector<Detection>& hands, double time, float aspect,
+                                             const TrackerStats& stats, const LumaView& luma)>;
 
 class Tracker {
  public:
@@ -58,8 +60,9 @@ class Tracker {
 
 // Runs detection on every frame of a movie file (tests and benchmarks).
 // Frames are processed as fast as possible; time is the movie timestamp.
-bool processMovie(const std::string& path,
-                  const std::function<void(const std::vector<Detection>&, double time, float aspect, double detectMs)>& cb,
-                  std::string* error);
+bool processMovie(
+    const std::string& path,
+    const std::function<void(const std::vector<Detection>&, double time, float aspect, double detectMs, const LumaView&)>& cb,
+    std::string* error);
 
 }  // namespace mh

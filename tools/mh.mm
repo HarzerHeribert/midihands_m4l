@@ -3,8 +3,13 @@
 //   mh cameras                         list cameras and the format midihands picks
 //   mh replay <clip.mp4>... [--phases corpus.yaml] [--layout keys|chords|split]
 //                                      run clips through tracking + engine
-//   mh live [camera] [--seconds N]     run the live camera and report timing
+//   mh live [camera] [--seconds N] [--instances N]
+//                                      run the live camera through the shared backend
+//   mh snapshot <clip.mp4> <frame> <out.png>
+//                                      render the editor's camera picture for one frame
 #import <Foundation/Foundation.h>
+#import <ImageIO/ImageIO.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <algorithm>
 #include <atomic>
@@ -18,6 +23,8 @@
 
 #include "../core/assign.hpp"
 #include "../core/engine.hpp"
+#include "../core/preview.hpp"
+#include "../mac/camera_hub.hpp"
 #include "../mac/tracker.hpp"
 
 using namespace mh;
@@ -79,7 +86,7 @@ int cmdReplay(const std::vector<std::string>& clips, const std::string& phasesPa
     std::string error;
     const bool ok = processMovie(
         clip,
-        [&](const std::vector<Detection>& dets, double time, float aspect, double ms) {
+        [&](const std::vector<Detection>& dets, double time, float aspect, double ms, const LumaView&) {
           detectMs.push_back(ms);
           const Frame frame = assigner.assign(dets, time, aspect);
           const Output out = engine.process(frame);
@@ -125,7 +132,7 @@ int cmdReplay(const std::vector<std::string>& clips, const std::string& phasesPa
   return 0;
 }
 
-int cmdLive(const std::string& camera, double seconds) {
+int cmdLive(const std::string& camera, double seconds, int instances) {
   if (cameraAccess() == CameraAccess::Undetermined) {
     std::atomic<int> answer{-1};
     requestCameraAccess([&](bool granted) { answer = granted; });
@@ -135,38 +142,87 @@ int cmdLive(const std::string& camera, double seconds) {
     std::fprintf(stderr, "camera access denied (System Settings > Privacy & Security > Camera)\n");
     return 1;
   }
+  // Several engines on one shared camera, like several devices in a Live Set.
+  struct Instance {
+    Engine engine;
+    std::atomic<long> frames{0};
+    long id = 0;
+  };
+  std::vector<std::unique_ptr<Instance>> all;
+  std::vector<double> detect, latency;
+  std::mutex mutex;
+  CameraInfo info;
+  for (int i = 0; i < std::max(1, instances); ++i) {
+    auto inst = std::make_unique<Instance>();
+    Instance* raw = inst.get();
+    const bool first = i == 0;
+    std::string error;
+    inst->id = CameraHub::shared().subscribe(
+        camera,
+        [&, raw, first](const HubFrame& hf) {
+          raw->engine.process(hf.frame);
+          if (++raw->frames % 30 == 0 && first)
+            std::printf("fps %5.1f | vision %5.2f ms | frame->landmarks %6.2f ms | hands L%d R%d\n", hf.stats.fps,
+                        hf.stats.detectMs, hf.stats.latencyMs, hf.frame.hands[Left].present,
+                        hf.frame.hands[Right].present);
+          if (first) {
+            std::lock_guard<std::mutex> lock(mutex);
+            detect.push_back(hf.stats.detectMs);
+            latency.push_back(hf.stats.latencyMs);
+          }
+        },
+        &error, &info);
+    if (!inst->id) {
+      std::fprintf(stderr, "%s\n", error.c_str());
+      return 1;
+    }
+    all.push_back(std::move(inst));
+  }
+  std::printf("camera: %s %dx%d @ %.0f fps, %d instance(s), %zu camera pipeline(s)\n", info.name.c_str(), info.width,
+              info.height, info.fps, instances, CameraHub::shared().activeCameras().size());
+  std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
+  for (auto& inst : all) CameraHub::shared().unsubscribe(inst->id);
+  std::lock_guard<std::mutex> lock(mutex);
+  std::printf("\nframes per instance:");
+  for (auto& inst : all) std::printf(" %ld", inst->frames.load());
+  std::printf("\nvision p50 %.2f p95 %.2f ms | frame->landmarks p50 %.2f p95 %.2f ms | pipelines left running: %zu\n",
+              percentile(detect, 0.5), percentile(detect, 0.95), percentile(latency, 0.5), percentile(latency, 0.95),
+              CameraHub::shared().activeCameras().size());
+  return 0;
+}
+
+int cmdSnapshot(const std::string& clip, long target, const std::string& outPath) {
   HandAssigner assigner;
   Engine engine;
-  std::vector<double> detect, latency;
-  std::atomic<long> frames{0}, notes{0};
-  std::mutex mutex;
-  Tracker tracker;
+  long index = 0;
+  bool written = false;
   std::string error;
-  const bool ok = tracker.start(
-      camera,
-      [&](const std::vector<Detection>& dets, double time, float aspect, const TrackerStats& stats) {
+  processMovie(
+      clip,
+      [&](const std::vector<Detection>& dets, double time, float aspect, double, const LumaView& luma) {
         const Output out = engine.process(assigner.assign(dets, time, aspect));
-        for (const MidiEvent& e : out.midi) notes += (e.status & 0xF0) == 0x90;
-        std::lock_guard<std::mutex> lock(mutex);
-        detect.push_back(stats.detectMs);
-        latency.push_back(stats.latencyMs);
-        if (++frames % 30 == 0)
-          std::printf("fps %5.1f | vision %5.2f ms | frame->landmarks %6.2f ms | hands L%d R%d | notes %ld\n", stats.fps,
-                      stats.detectMs, stats.latencyMs, out.handPresent[Left], out.handPresent[Right], notes.load());
+        if (index++ != target || written) return;
+        const int w = CameraHub::kPreviewWidth, h = int(w / aspect);
+        const GrayImage gray = mirroredThumbnail(luma, w, h);
+        std::vector<uint8_t> argb(size_t(w) * h * 4);
+        renderPreview(gray, out.frame, out.fingerOn, argb.data(), w * 4);
+        CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(argb.data(), w, h, 8, w * 4, cs,
+                                                 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Big);
+        CGImageRef img = CGBitmapContextCreateImage(ctx);
+        NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:outPath.c_str()]];
+        CGImageDestinationRef dst =
+            CGImageDestinationCreateWithURL((__bridge CFURLRef)url, (__bridge CFStringRef)UTTypePNG.identifier, 1, nil);
+        CGImageDestinationAddImage(dst, img, nil);
+        written = CGImageDestinationFinalize(dst);
+        CFRelease(dst);
+        CGImageRelease(img);
+        CGContextRelease(ctx);
+        CGColorSpaceRelease(cs);
       },
       &error);
-  if (!ok) {
-    std::fprintf(stderr, "%s\n", error.c_str());
-    return 1;
-  }
-  const CameraInfo info = tracker.camera();
-  std::printf("camera: %s %dx%d @ %.0f fps\n", info.name.c_str(), info.width, info.height, info.fps);
-  std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
-  tracker.stop();
-  std::lock_guard<std::mutex> lock(mutex);
-  std::printf("\n%ld frames | vision p50 %.2f p95 %.2f ms | frame->landmarks p50 %.2f p95 %.2f ms\n", frames.load(),
-              percentile(detect, 0.5), percentile(detect, 0.95), percentile(latency, 0.5), percentile(latency, 0.95));
-  return 0;
+  std::printf(written ? "wrote %s\n" : "frame not found: %s\n", outPath.c_str());
+  return written ? 0 : 1;
 }
 
 }  // namespace
@@ -175,17 +231,18 @@ int main(int argc, const char** argv) {
   @autoreleasepool {
     std::vector<std::string> args(argv + 1, argv + argc);
     if (args.empty()) {
-      std::fprintf(stderr, "usage: mh cameras | mh replay <clip>... [--phases corpus.yaml] [--layout keys|chords|split] | mh live [camera] [--seconds N]\n");
+      std::fprintf(stderr, "usage: mh cameras | mh replay <clip>... [--phases corpus.yaml] [--layout keys|chords|split] | mh live [camera] [--seconds N] [--instances N] | mh snapshot <clip> <frame> <out.png>\n");
       return 2;
     }
     const std::string cmd = args[0];
     std::vector<std::string> positional;
     std::string phases, camera;
     double seconds = 10.0;
-    int layout = Split;
+    int layout = Split, instances = 1;
     for (size_t i = 1; i < args.size(); ++i) {
       if (args[i] == "--phases" && i + 1 < args.size()) phases = args[++i];
       else if (args[i] == "--seconds" && i + 1 < args.size()) seconds = std::stod(args[++i]);
+      else if (args[i] == "--instances" && i + 1 < args.size()) instances = std::stoi(args[++i]);
       else if (args[i] == "--layout" && i + 1 < args.size()) {
         const std::string l = args[++i];
         layout = l == "keys" ? Keys : l == "chords" ? Chords : Split;
@@ -193,7 +250,8 @@ int main(int argc, const char** argv) {
     }
     if (cmd == "cameras") return cmdCameras();
     if (cmd == "replay") return cmdReplay(positional, phases, layout);
-    if (cmd == "live") return cmdLive(positional.empty() ? "" : positional[0], seconds);
+    if (cmd == "live") return cmdLive(positional.empty() ? "" : positional[0], seconds, instances);
+    if (cmd == "snapshot" && positional.size() == 3) return cmdSnapshot(positional[0], std::stol(positional[1]), positional[2]);
     std::fprintf(stderr, "unknown command: %s\n", cmd.c_str());
     return 2;
   }

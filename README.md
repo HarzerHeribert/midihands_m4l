@@ -35,29 +35,46 @@ ln "$PWD/device/MidiHands.amxd" "$HOME/Music/Ableton/User Library/Presets/MIDI E
 
 ## Using the device
 
-| Control | What it does |
+The device on the track is the compact view: the hand view, the camera switch and camera
+choice, and **Open Editor**. The editor is a separate window you can move anywhere (another
+monitor works well). Closing it does not stop anything.
+
+| Editor section | What it does |
 |---|---|
-| Camera / device menu | Turns tracking on and picks the camera |
+| Camera | Live camera picture with both hands drawn on it (left blue, right orange, playing fingers yellow). "Show Picture" turns it off |
+| Movement | Live meters for the ten hand movements (height, x, pinch, fist, tilt of each hand) |
 | Layout | **Split**: left hand plays chords I, IV, V, vi (pinky → index); right hand plays melody notes. **Keys**: eight fingers are eight scale notes, left pinky to right pinky. **Chords**: same as Keys, but every finger plays a triad |
-| Live Scale | Follows the Set's root and scale (Live 12). Turn it off to pick root and scale yourself |
-| Sens | How far a finger must straighten to play. Higher means it triggers sooner |
-| Velocity / Vel mode | Fixed velocity, hand height, or finger speed |
-| Oct | Octave shift |
-| CC Out | Also sends the ten hand movements as CC 20–29 (for hardware or plugins with MIDI learn) |
-| Map slots | Pick a movement (height, x, pinch, fist, tilt of either hand), click Map, click any parameter in Live. Min/max set the range |
+| Hands that play notes | Both, left only, or right only (see "Several devices") |
+| Key | **Live Scale** follows the Set's root and scale (Live 12). Turn it off to pick root and scale here |
+| Sens / Velocity / Vel mode / Octave | Trigger sensitivity, fixed velocity or velocity from hand height or finger speed, octave shift |
+| Timing | Minimum note length, how long notes survive a tracking dropout, movement smoothing |
+| MIDI | Channel, and **Send CC**: the ten movements as CCs starting at "from CC" |
+| Map hand movement | Eight slots: pick a movement, click Map, click any parameter in Live. Min/Max set the range, Curve bends the response |
 
 A finger plays while it is straightened and stops when it bends. Thumbs never play notes.
-Notes last at least 180 ms and survive tracking dropouts up to 300 ms, so flicker does not
-retrigger.
+
+## Several devices, several cameras
+
+Put MidiHands on as many tracks as you like. All of them share one tracking backend inside
+Live:
+
+- Each camera that at least one device has switched on runs **one** detection. Devices on
+  the same camera get the exact same hands, so they never disagree.
+- A second camera only starts when some device picks it, and stops when no device uses it.
+- Each device keeps its own settings. For example: piano track = left hand, Chords; synth
+  track = right hand, Keys.
 
 ## How it is built
 
 ```
-core/     portable C++17: filters, finger features, hand sides, scales, note bookkeeping, engine
-mac/      macOS only: AVFoundation camera + Apple Vision hand pose
-max/      the mh.hands Max external (wraps mac/ + core/)
+core/     portable C++17: filters, finger features, hand sides, scales, note bookkeeping,
+          engine, camera-picture rendering
+mac/      macOS only: AVFoundation camera + Apple Vision hand pose (tracker), and the
+          shared backend that runs one pipeline per active camera (camera_hub)
+max/      the mh.hands Max external (one per device, subscribes to the shared backend)
 device/   build_device.py generates MidiHands.amxd (never edit the .amxd by hand)
-package/  Max package: externals/ (built) and javascript/mh-view.js (hand view)
+package/  Max package: externals/ (built), javascript/mh-view.js (hand view on the
+          track) and mh-editor.js (status and movement meters in the editor)
 tools/    mh command-line tool: list cameras, replay recorded clips, live timing
 tests/    core unit tests
 ```
@@ -85,11 +102,13 @@ mark arrival at the Mac, so sensor exposure and transport delay are not included
 ```bash
 ./build/mh cameras
 ./build/mh replay clips/*.mp4 --phases corpus.yaml
-./build/mh live "My Camera" --seconds 10
+./build/mh live "My Camera" --seconds 10 --instances 3   # three engines, one shared camera
+./build/mh snapshot clip.mp4 480 frame.png                # render the editor's camera picture
 ```
 
 ## Shipping a build
 
 Open the device in Live's Max editor and click **Freeze**: this embeds the external and the
-view script so the single `.amxd` works without `make install`. For other people's Macs the
+view scripts so the single `.amxd` works without `make install`. After rebuilding the
+external, restart Live: Max loads a native object once per session. For other people's Macs the
 external also has to be signed with a Developer ID and notarized.

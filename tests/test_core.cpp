@@ -9,6 +9,7 @@
 #include "../core/engine.hpp"
 #include "../core/features.hpp"
 #include "../core/music.hpp"
+#include "../core/preview.hpp"
 
 using namespace mh;
 
@@ -260,6 +261,42 @@ TEST(assigner_keeps_single_hand_on_its_side) {
   d.lm = makeHand(0.61f, 0.5f, kOpen);
   Frame f = a.assign({d}, 0.02, 1.f);
   CHECK(f.hands[Left].present && !f.hands[Right].present);
+}
+
+TEST(hands_setting_limits_notes_to_one_side) {
+  Engine engine;
+  Params p;
+  p.layout = Keys;
+  p.hands = LeftHandOnly;
+  std::vector<MidiEvent> ignored;
+  engine.setParams(p, ignored);
+  const auto left = makeHand(0.3f, 0.5f, kOpen);
+  const auto right = makeHand(0.7f, 0.5f, kOpen);
+  Output o = engine.process(frameWith(0.0, &left, &right));
+  CHECK(count(o.midi, 0x90) == 4);  // only the left hand's fingers
+  CHECK(o.fingerOn[Left][Index] && !o.fingerOn[Right][Index]);
+  CHECK(o.expr[RHeight] > 0.f);     // expressions still follow both hands
+}
+
+TEST(preview_is_mirrored_and_draws_hands) {
+  // Source frame: left half dark, right half bright.
+  std::vector<uint8_t> luma(64 * 32);
+  for (int y = 0; y < 32; ++y)
+    for (int x = 0; x < 64; ++x) luma[y * 64 + x] = x < 32 ? 0 : 200;
+  const GrayImage g = mirroredThumbnail({luma.data(), 64, 32, 64}, 32, 16);
+  CHECK(g.pixels[0] > 150);       // mirrored: bright side now on the left
+  CHECK(g.pixels[31] < 50);
+
+  Frame f;
+  const auto hand = makeHand(0.5f, 0.5f, kOpen);
+  f.hands[Right] = {true, 1.f, hand};
+  std::array<std::array<bool, kFingers>, kSides> on{};
+  on[Right][Index] = true;
+  std::vector<uint8_t> argb(32 * 16 * 4);
+  renderPreview(g, f, on, argb.data(), 32 * 4);
+  bool colored = false;
+  for (size_t i = 0; i < argb.size(); i += 4) colored |= argb[i + 1] != argb[i + 3];  // r != b
+  CHECK(colored);
 }
 
 int main() {

@@ -8,6 +8,7 @@
 
 CXX       ?= clang++
 SDK       := third_party/max-sdk-base/c74support/max-includes
+JIT       := third_party/max-sdk-base/c74support/jit-includes
 MACOS_MIN := 14.0
 ARCHS     := -arch arm64 -arch x86_64
 CXXFLAGS  := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter
@@ -17,7 +18,8 @@ FRAMEWORKS := -framework Foundation -framework AVFoundation -framework CoreMedia
 
 CORE_SRC := $(wildcard core/*.cpp)
 CORE_HDR := $(wildcard core/*.hpp)
-MAC_SRC  := mac/tracker.mm
+MAC_SRC  := mac/tracker.mm mac/camera_hub.mm
+MAC_HDR  := mac/tracker.hpp mac/camera_hub.hpp
 
 PACKAGE  := package
 EXTERNAL := $(PACKAGE)/externals/mh.hands.mxo
@@ -31,17 +33,19 @@ external: $(EXTERNAL)/Contents/MacOS/mh.hands
 cli: build/mh
 device: device/MidiHands.amxd
 
-$(EXTERNAL)/Contents/MacOS/mh.hands: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) mac/tracker.hpp max/mh.hands.mm max/Info.plist
+$(EXTERNAL)/Contents/MacOS/mh.hands: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HDR) max/mh.hands.mm max/Info.plist
 	@mkdir -p $(EXTERNAL)/Contents/MacOS
-	$(CXX) $(CXXFLAGS) $(OBJCFLAGS) $(ARCHS) -Wno-cast-function-type-mismatch -I$(SDK) -DMAC_VERSION \
-		-bundle -o $@ $(CORE_SRC) $(MAC_SRC) max/mh.hands.mm $(FRAMEWORKS) @$(SDK)/c74_linker_flags.txt
+	$(CXX) $(CXXFLAGS) $(OBJCFLAGS) $(ARCHS) -Wno-cast-function-type-mismatch -I$(SDK) -I$(JIT) -DMAC_VERSION \
+		-bundle -o $@ $(CORE_SRC) $(MAC_SRC) max/mh.hands.mm $(FRAMEWORKS) @$(SDK)/c74_linker_flags.txt \
+		-F$(JIT) -framework JitterAPI
 	cp max/Info.plist $(EXTERNAL)/Contents/Info.plist
 	printf 'iLaX????' > $(EXTERNAL)/Contents/PkgInfo
 	codesign --force --sign - $(EXTERNAL)
 
-build/mh: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) mac/tracker.hpp tools/mh.mm
+build/mh: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HDR) tools/mh.mm
 	@mkdir -p build
-	$(CXX) $(CXXFLAGS) $(OBJCFLAGS) -o $@ $(CORE_SRC) $(MAC_SRC) tools/mh.mm $(FRAMEWORKS)
+	$(CXX) $(CXXFLAGS) $(OBJCFLAGS) -o $@ $(CORE_SRC) $(MAC_SRC) tools/mh.mm $(FRAMEWORKS) \
+		-framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers
 
 build/test_core: $(CORE_SRC) $(CORE_HDR) tests/test_core.cpp
 	@mkdir -p build

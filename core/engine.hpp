@@ -14,6 +14,7 @@ namespace mh {
 
 enum Layout { Keys = 0, Chords = 1, Split = 2 };
 enum VelocityMode { VelocityFixed = 0, VelocityHeight = 1, VelocitySpeed = 2 };
+enum HandsUsed { BothHands = 0, LeftHandOnly = 1, RightHandOnly = 2 };
 
 // Continuous controls, in this order, for mapping to Live parameters.
 enum Expr { LHeight = 0, LX, LPinch, LFist, LTilt, RHeight, RX, RPinch, RFist, RTilt, kExpr };
@@ -21,6 +22,7 @@ extern const char* const kExprNames[kExpr];
 
 struct Params {
   bool notes = true;            // play notes from fingers
+  int hands = BothHands;        // which hands play notes on this instance
   int layout = Split;
   Scale scale;
   int octave = 0;
