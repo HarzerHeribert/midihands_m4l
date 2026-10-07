@@ -1,0 +1,4 @@
+build/
+package/externals/
+.DS_Store
+*.dSYM/
