@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 
@@ -197,6 +198,17 @@ bool Tracker::start(const std::string& camera, DetectionCallback callback, std::
     release(source);
     return false;
   }
+  // Rows of a plain (not 2D) buffer: the stride the output format declares, else
+  // Media Foundation's default for RGB32 (negative: bottom-up).
+  LONG defaultStride = 0;
+  IMFMediaType* current = nullptr;
+  if (SUCCEEDED(reader->GetCurrentMediaType(DWORD(MF_SOURCE_READER_FIRST_VIDEO_STREAM), &current))) {
+    UINT32 stride = 0;
+    if (SUCCEEDED(current->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride))) defaultStride = LONG(INT32(stride));
+    release(current);
+  }
+  if (defaultStride == 0 && FAILED(MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.Data1, UINT32(info.width), &defaultStride)))
+    defaultStride = -info.width * 4;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->camera = info;
@@ -204,7 +216,7 @@ bool Tracker::start(const std::string& camera, DetectionCallback callback, std::
   impl_->running = true;
   HandPipeline* pipeline = impl_->pipeline.get();
   std::atomic<bool>* running = &impl_->running;
-  impl_->thread = std::thread([reader, source, pipeline, running, callback = std::move(callback), info]() mutable {
+  impl_->thread = std::thread([reader, source, pipeline, running, callback = std::move(callback), info, defaultStride]() mutable {
     MfScope threadMf;
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     double lastFrame = 0.0, fps = 0.0;
@@ -221,11 +233,26 @@ bool Tracker::start(const std::string& camera, DetectionCallback callback, std::
       const double frameTime = nowSeconds();
       IMFMediaBuffer* buffer = nullptr;
       IMF2DBuffer* buffer2d = nullptr;
-      if (SUCCEEDED(sample->GetBufferByIndex(0, &buffer)) &&
-          SUCCEEDED(buffer->QueryInterface(IID_PPV_ARGS(&buffer2d)))) {
-        BYTE* scan0 = nullptr;
-        LONG pitch = 0;
-        if (SUCCEEDED(buffer2d->Lock2D(&scan0, &pitch))) {
+      BYTE* scan0 = nullptr;
+      LONG pitch = 0;
+      bool locked = false;
+      if (SUCCEEDED(sample->GetBufferByIndex(0, &buffer))) {
+        if (SUCCEEDED(buffer->QueryInterface(IID_PPV_ARGS(&buffer2d)))) {
+          locked = SUCCEEDED(buffer2d->Lock2D(&scan0, &pitch));
+        } else {
+          BYTE* data = nullptr;
+          DWORD length = 0;
+          const DWORD rowBytes = DWORD(std::abs(defaultStride));
+          if (SUCCEEDED(buffer->Lock(&data, nullptr, &length))) {
+            locked = length >= rowBytes * DWORD(info.height);
+            if (!locked) buffer->Unlock();
+            pitch = defaultStride;
+            scan0 = pitch < 0 ? data + size_t(rowBytes) * (info.height - 1) : data;  // the top row
+          }
+        }
+      }
+      {
+        if (locked) {
           const BgraImage image{scan0, info.width, info.height, int(pitch)};
           const double t0 = nowSeconds();
           std::vector<Detection> hands = pipeline->process(image);
@@ -244,7 +271,8 @@ bool Tracker::start(const std::string& camera, DetectionCallback callback, std::
           luma.height = info.height;
           luma.native = &image;  // the picture stream encodes it in color
           callback(hands, frameTime, float(info.width) / float(std::max(1, info.height)), stats, luma);
-          buffer2d->Unlock2D();
+          if (buffer2d) buffer2d->Unlock2D();
+          else buffer->Unlock();
         }
       }
       release(buffer2d);
