@@ -67,7 +67,7 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
   here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 work=""
-cleanup() { [ -n "$work" ] && rm -rf "$work"; }
+cleanup() { if [ -n "$work" ]; then rm -rf "$work"; fi; }  # must not fail: set -e would make it the exit code
 trap cleanup EXIT
 
 if [ -n "$here" ] && [ -d "$here/midihands/externals/mh.hands.mxo" ] && [ -f "$here/MidiHands.amxd" ]; then

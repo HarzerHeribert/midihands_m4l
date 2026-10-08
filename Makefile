@@ -26,6 +26,8 @@ MAC_HDR  := mac/tracker.hpp mac/camera_hub.hpp mac/preview_server.hpp mac/update
 PACKAGE  := package
 EXTERNAL := $(PACKAGE)/externals/mh.hands.mxo
 MAX_PACKAGES := $(HOME)/Documents/Max 9/Packages
+USER_LIBRARY ?= $(HOME)/Music/Ableton/User Library
+DEVICE_DIR   := $(USER_LIBRARY)/Presets/MIDI Effects/Max MIDI Effect
 
 DIST     := dist/MidiHands-$(VERSION)
 
@@ -60,13 +62,17 @@ test: build/test_core
 device/MidiHands.amxd: device/build_device.py VERSION
 	python3 device/build_device.py
 
-install: external
-	@mkdir -p "$(MAX_PACKAGES)"
+# Development install: Max uses this checkout's package, Live's browser this device file.
+install: external device
+	@mkdir -p "$(MAX_PACKAGES)" "$(DEVICE_DIR)"
+	@if [ -d "$(MAX_PACKAGES)/midihands" ] && [ ! -L "$(MAX_PACKAGES)/midihands" ]; then \
+		rm -rf "$(MAX_PACKAGES)/midihands"; echo "Replaced the installed release with this checkout"; fi
 	ln -sfn "$(CURDIR)/$(PACKAGE)" "$(MAX_PACKAGES)/midihands"
-	@echo "Linked $(MAX_PACKAGES)/midihands -> $(CURDIR)/$(PACKAGE)"
+	ln -f device/MidiHands.amxd "$(DEVICE_DIR)/MidiHands.amxd"
+	@echo "Restart Live to load the external from this checkout."
 
 uninstall:
-	rm -f "$(MAX_PACKAGES)/midihands"
+	rm -f "$(MAX_PACKAGES)/midihands" "$(DEVICE_DIR)/MidiHands.amxd"
 
 replay: cli
 	./build/mh replay $(CLIPS) $(if $(PHASES),--phases $(PHASES))

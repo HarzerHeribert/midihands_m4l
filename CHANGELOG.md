@@ -5,6 +5,14 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Fixed
+- `install.sh` run from an unzipped release folder reported failure (exit code 1) although
+  the install succeeded.
+
+### Changed
+- README rewritten for players, with product renderings; build and release notes moved to
+  docs/DEVELOPMENT.md. `make install` now replaces a release install with the checkout.
+
 ## [0.1.0] - 2026-10-08
 
 First release.

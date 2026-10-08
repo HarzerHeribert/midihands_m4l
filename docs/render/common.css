@@ -1,0 +1,40 @@
+/* Shared look for the README renderings (see render.sh). */
+@font-face { font-family: AS; src: url(FONTS/AbletonSansSmall-Regular.ttf); font-weight: 400; }
+@font-face { font-family: AS; src: url(FONTS/AbletonSansSmall-Bold.ttf); font-weight: 700; }
+@font-face { font-family: ASL; src: url(FONTS/AbletonSans-Light.ttf); }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body {
+  position: relative; font-family: AS, -apple-system, sans-serif; color: #e2e2e2;
+  background:
+    radial-gradient(1000px 640px at 14% 4%, rgba(255, 173, 86, .20), transparent 62%),
+    radial-gradient(1000px 760px at 96% 100%, rgba(3, 195, 213, .16), transparent 60%),
+    #141414;
+}
+body::before {
+  content: ""; position: absolute; inset: 0;
+  background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse at 50% 55%, #000 30%, transparent 75%);
+}
+.scene { position: absolute; inset: 0; perspective: 2400px; perspective-origin: 50% 40%; }
+.win {
+  position: absolute; border-radius: 12px; overflow: hidden; background: #242424;
+  box-shadow: 0 60px 120px rgba(0, 0, 0, .7), 0 18px 40px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .09);
+}
+.win .bar { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 14px;
+  background: linear-gradient(#323232, #2a2a2a); border-bottom: 1px solid #111; color: #a0a0a0; font-size: 14px; }
+.win .bar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+.win .bar i + i { background: #febc2e; }
+.win .bar i + i + i { background: #28c840; }
+.win .bar span { flex: 1; text-align: center; margin-right: 60px; }
+.win img { display: block; width: 100%; }
+.crop { position: absolute; border-radius: 10px; background-repeat: no-repeat;
+  box-shadow: 0 40px 90px rgba(0, 0, 0, .75), 0 0 0 1px rgba(255, 255, 255, .12); }
+.mark { position: absolute; left: 64px; top: 52px; }
+.mark b { display: block; font-size: 46px; letter-spacing: -.01em; color: #fff; }
+.mark span { display: block; margin-top: 6px; font: 26px ASL, AS, sans-serif; color: #b9b9b9; }
+.mark em { font-style: normal; color: #ffad56; }
+.tag { position: absolute; padding: 7px 12px; border-radius: 6px; background: rgba(20, 20, 20, .88);
+  box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 10px 30px rgba(0,0,0,.5); font-size: 17px; color: #e2e2e2; }
+.tag i { display: inline-block; width: 9px; height: 9px; margin-right: 9px; background: #00d38d; }

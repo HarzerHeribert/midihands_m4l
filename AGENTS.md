@@ -42,5 +42,7 @@ Read README.md first.
   `CHANGELOG.md` `[Unreleased]` up to date with user-visible changes.
 - `scripts/install.sh` is what users and the device's Update button run: keep it working
   both from an unzipped release folder and piped from `releases/latest/download/`.
+- README images come from `docs/render/render.sh` (editor demo mode, never a real camera
+  picture); re-render after visible UI changes.
 - `mac/updater` talks to GitHub (release check, cached for an hour); nothing else in the
   device goes online.
