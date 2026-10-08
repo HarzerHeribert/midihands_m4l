@@ -5,6 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-08
+
 The first normal release with the Windows version; it collects 0.3.0-beta.1 and beta.2.
 
 ### Added
