@@ -65,6 +65,11 @@ Read README.md first.
 - Engage options (`ENGAGE` in the generator, `clutchFor()` in `core/clutch.hpp`, `ENGAGE` in
   the pages) and takeover modes are stored as indices: append only. New parameters go at the
   end of `stored_params()`, so older Sets keep their parameter order.
+- FX slots are a pool of `FX_SLOTS` (8); `fxo<k>` stores which slot runs at chain place k
+  (`MHFX.chain()`, which also appends slots that hold an effect but are not listed, as Sets
+  from before the chain have). Reordering only rewrites `fxo<k>`, never a slot's parameters.
+  A gesture switches a slot through `core/clutch` `SlotSwitches`: `mh.hands` sends
+  `fxon <slot> <0|1>` and the patch sets that slot's On parameter.
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
 - Work on `main`; this is a solo project. The owner alone decides what is merged.
 - The version lives in `VERSION` (compiled in as `MH_VERSION`, see `core/version.hpp`);

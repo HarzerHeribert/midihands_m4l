@@ -510,17 +510,17 @@ TEST(clutch_gestures_settle_hold_and_let_go) {
   CHECK(!at(1 / 30.0)[GestureThumbOut]);  // a single frame does not count yet
   CHECK(!at(1 / 30.0)[GestureThumbOut]);
   CHECK(at(1 / 30.0)[GestureThumbOut]);
-  f.thumbSpan = 0.9f;                      // between the thresholds: stays out
+  f.thumbSpan = 0.75f;                     // between the thresholds: stays out
   CHECK(at(0.1)[GestureThumbOut]);
   f.thumbSpan = 0.5f;
   at(1 / 30.0);
   CHECK(!at(0.1)[GestureThumbOut]);
-  f.curl[Pinky] = 0.f;  // all fingers straight: not a pinky gesture
+  f.curl[Pinky] = 0.f;  // a straight pinky counts, whatever the other fingers do
   f.curl[Index] = f.curl[Middle] = f.curl[Ring] = 0.f;
   at(1 / 30.0);
-  CHECK(!at(0.1)[GesturePinky]);
+  CHECK(at(0.1)[GesturePinky]);
   f.fist = 0.9f;
-  f.curl[Index] = f.curl[Middle] = f.curl[Ring] = 0.9f;  // the pinky up on its own
+  f.curl[Index] = f.curl[Middle] = f.curl[Ring] = 0.9f;
   at(1 / 30.0);
   const auto g = at(0.1);
   CHECK(g[GestureFist] && g[GesturePinky] && !g[GestureThumbIn]);
@@ -701,29 +701,36 @@ TEST(links_shape_ranges_curves_and_inversion) {
   CHECK(std::fabs(links.shape(0, 0.4f) - 0.25f) < 1e-5f);
 }
 
-TEST(held_movements_follow_only_while_engaged) {
-  HeldMovements h;
-  std::array<float, kExpr> expr{};
+TEST(slot_switches_hold_and_toggle) {
+  SlotSwitches sw;
+  std::vector<SlotSwitch> out;
   Gestures g{};
-  const int c = clutchFor(Right, GestureThumbOut);
-  expr[LHeight] = 0.5f;
-  h.apply(expr, g);
-  CHECK(h.value(c, LHeight) == 0.5f);
-  expr[LHeight] = 0.8f;
-  h.apply(expr, g);
-  CHECK(h.value(c, LHeight) == 0.5f);
-  g[Right][GestureThumbOut] = true;
-  expr[LHeight] = 0.9f;
-  h.apply(expr, g);
-  CHECK(std::fabs(h.value(c, LHeight) - 0.6f) < 1e-5f);
-  CHECK(std::fabs(h.value(clutchFor(Left, GestureFist), LHeight) - 0.5f) < 1e-5f);
-  g[Right][GestureThumbOut] = false;
-  expr[LHeight] = 0.2f;
-  h.apply(expr, g);
-  g[Right][GestureThumbOut] = true;
-  expr[LHeight] = 0.3f;
-  h.apply(expr, g);
-  CHECK(std::fabs(h.value(c, LHeight) - 0.7f) < 1e-5f);
+  const int fist = clutchFor(Right, GestureFist);
+  sw.setOn(0, true);
+  sw.setOn(1, true);
+  sw.setGesture(0, fist);  // Hold
+  sw.setGesture(1, fist);
+  sw.setMode(1, SlotSwitches::Toggle);
+  sw.update(g, out);
+  CHECK(out.size() == 1 && out[0].slot == 0 && !out[0].on);  // Hold: off until held
+  out.clear();
+  g[Right][GestureFist] = true;
+  sw.update(g, out);
+  CHECK(out.size() == 2 && out[0].on && !out[1].on);  // Hold on; Toggle flips off
+  out.clear();
+  sw.update(g, out);
+  CHECK(out.empty());  // still held: nothing new
+  g[Right][GestureFist] = false;
+  sw.update(g, out);
+  CHECK(out.size() == 1 && out[0].slot == 0 && !out[0].on);  // Hold lets go; Toggle stays
+  out.clear();
+  g[Right][GestureFist] = true;
+  sw.update(g, out);
+  CHECK(out.size() == 2 && out[1].slot == 1 && out[1].on);
+  sw.setGesture(2, kEngageAlways);
+  out.clear();
+  sw.update(g, out);
+  CHECK(out.empty());  // slots without a gesture are left alone
 }
 
 int main() {

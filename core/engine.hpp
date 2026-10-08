@@ -64,6 +64,7 @@ struct Output {
   std::array<float, kExpr> expr{};
   std::array<bool, kSides> handPresent{};
   Gestures gestures{};  // clutch gestures held, per hand
+  std::array<float, kSides> thumbSpan{};  // smoothed, what thumb in/out compare (0: no hand)
   std::array<std::array<bool, kFingers>, kSides> fingerOn{};
   Frame frame;  // filtered landmarks, for display
 };

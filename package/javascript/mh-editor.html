@@ -11,9 +11,8 @@
   Max -> page (window.max.bindInlet):
     param <key> <value>        a stored setting changed (boot, automation, this page)
     hands <aspect> ...         both hands, every camera frame (see max/mh.hands.mm)
-    expr <98 values>           every camera frame: 10 hand movements 0-1, 8 clutch gestures
-                               0/1 (L thumb out, thumb in, fist, pinky, then R), 8 x 10 held
-                               movements (each gesture's copy, see core/links.hpp)
+    expr <20 values>           every camera frame: 10 hand movements 0-1, 8 clutch gestures
+                               0/1 (L thumb out, thumb in, fist, pinky, then R), L and R thumb span
     status / stats / error     camera state
     assets <url>               local server base: /font/<file> serves Live's fonts
     version <x.y.z>            this build
@@ -177,10 +176,32 @@ body.notes-off .pads { opacity: .45; }
 .fxcard { padding: 8px 10px 10px; }
 .fxhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .fxhead .num { color: var(--dim); width: 34px; }
-.fxhead .fxsel { flex: 1; }
-.fxhead .fxon { padding: 2px 8px; }
-.fxhead .fxeng { width: 104px; }
+.fxhead { gap: 5px; }
+.fxhead .fxsel { flex: 1; min-width: 0; }
+.fxhead .fxon { padding: 2px 7px; }
+.fxhead .grip { color: var(--dim); cursor: grab; display: flex; }
+.fxhead .grip:hover { color: var(--fg-hi); }
+.fxhead .num { width: 30px; white-space: nowrap; }
+.fxhead .sw { display: flex; align-items: center; gap: 3px; color: var(--dim); }
+.fxhead .sw.set { color: var(--green); }
+.fxhead .fxsw { width: 92px; }
+.fxhead .swm { display: none; }
+.fxhead .sw.set .swm { display: flex; }
+.fxhead .swm button { padding: 2px 5px; min-height: 20px; }
+.fxhead .more { border: 0; background: none; color: var(--dim); font-size: 14px; padding: 0 2px; }
+.fxhead .more:hover { color: var(--fg-hi); }
+.fxcard { position: relative; border: 1px solid transparent; }
+.fxcard.sel { border-color: var(--fg); }
+.fxcard.dragging { opacity: .5; }
 .fxcard.bypass .fxknobs { opacity: .45; }
+.fxslots { position: relative; }
+.fxdrop { position: absolute; left: 0; right: 0; height: 2px; background: var(--orange); pointer-events: none; }
+.fxadd { align-self: flex-start; padding: 6px 14px; }
+.fxadd:disabled { color: var(--dim); }
+.fxmenu { position: fixed; z-index: 10; display: flex; flex-direction: column; min-width: 150px; background: var(--surface); border: 1px solid var(--frame); box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+.fxmenu button { display: flex; justify-content: space-between; border: 0; background: none; padding: 5px 10px; text-align: left; }
+.fxmenu button:hover { background: var(--orange); color: var(--on-text); }
+.fxmenu kbd { font: inherit; color: var(--dim); }
 .fxcard.empty .fxknobs { display: none; }
 .fxknobs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .fxknob { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
@@ -235,10 +256,16 @@ body.move-off .hand { opacity: .5; }
 .link .st.moving::before { background: var(--green); box-shadow: 0 0 5px var(--green); }
 .link .st.waiting::before { background: var(--orange); }
 .link .st.warn { color: var(--alert); }
+.ico { width: 14px; height: 14px; flex: none; vertical-align: -3px; }
 .hand h4 { display: flex; align-items: center; gap: 8px; }
-.gest { display: flex; gap: 4px; margin-left: auto; font-weight: 400; }
-.gest span { padding: 1px 6px; border: 1px solid var(--frame); background: var(--control); color: var(--dim); font-size: 10px; }
-.gest span.on { background: var(--green); color: var(--on-text); }
+.gest { display: flex; align-items: center; gap: 4px; margin-left: auto; font-weight: 400; color: var(--dim); }
+.gest > span:not(.tmeter) { display: flex; align-items: center; gap: 3px; padding: 1px 6px 1px 3px; border: 1px solid var(--frame); background: var(--control); color: var(--dim); font-size: 10px; }
+.gest > span.on { background: var(--green); color: var(--on-text); }
+.tmeter { position: relative; width: 44px; height: 8px; background: var(--display); border: 1px solid var(--frame); }
+.tmeter i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #6a6a6a; }
+.tmeter i.on { background: var(--green); }
+.tmeter b { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--fg); }
+.link .englabel { display: flex; align-items: center; gap: 3px; color: var(--dim); white-space: nowrap; }
 .link .en { padding: 3px 0; }
 .link .target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-hi); }
 .link .target.listen { color: var(--orange); }
@@ -375,6 +402,21 @@ const LINKS = 16;                               // movement -> parameter links, 
 const GESTURES = ["Thumb out", "Thumb in", "Fist", "Pinky up"];
 const ENGAGE = ["Always", ...["L", "R"].flatMap((h) => GESTURES.map((g) => `${h} ${g.toLowerCase()}`))];
 const TAKEOVER = ["Jump", "Grab", "Pickup"];
+// Pictograms, 16 x 16 in the text color: a hand marks everything a gesture switches or
+// engages; the gestures show their pose (a palm, fingers up or curled, the thumb).
+const ICON = (body) => `<svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const PALM = `<path d="M5.5 8.5v4.2c0 .9.6 1.5 1.5 1.5h4c.9 0 1.5-.6 1.5-1.5V8.5"/>`;
+const FINGERS = (up) => [6.5, 8.5, 10.5, 12.5].map((x, i) => up[i] ? `<path d="M${x} 8.5V${i === 3 ? 4.5 : 2.5}"/>` : `<path d="M${x} 8.5V7"/>`).join("");
+const ICONS = {
+  hand: ICON(PALM + FINGERS([1, 1, 1, 1]) + `<path d="M5.5 11L3 8.5"/>`),
+  thumbOut: ICON(PALM + FINGERS([1, 1, 1, 1]) + `<path d="M5.5 11.5H1"/>`),
+  thumbIn: ICON(PALM + FINGERS([1, 1, 1, 1]) + `<path d="M5.5 12l4-1"/>`),
+  fist: ICON(PALM + FINGERS([0, 0, 0, 0]) + `<path d="M5.5 11l4-.5"/>`),
+  pinky: ICON(PALM + FINGERS([0, 0, 0, 1]) + `<path d="M5.5 11l4-.5"/>`),
+};
+const GESTURE_ICONS = [ICONS.thumbOut, ICONS.thumbIn, ICONS.fist, ICONS.pinky];
+const GRIP = `<svg class="ico" viewBox="0 0 16 16" fill="currentColor">${[5, 8, 11].flatMap((y) => [6, 10].map((x) => `<circle cx="${x}" cy="${y}" r="1.1"/>`)).join("")}</svg>`;
+const THUMB_SCALE = 1.2;   // the thumb meter's full width, in thumb spans (see core/clutch.hpp)
 const ENGAGE_OPTIONS = `<option value="0">Always</option>` + ["Left hand", "Right hand"].map((h, side) =>
   `<optgroup label="${h}">` + GESTURES.map((g, i) => `<option value="${1 + side * 4 + i}">${h[0]} ${g.toLowerCase()}</option>`).join("") + "</optgroup>").join("");
 const LOW_NOTE = 36, HIGH_NOTE = 84;            // keyboard C2..C6
@@ -386,8 +428,8 @@ const P = { notes: 1, move: 1, layout: 2, hands: 0, follow: 1, root: 0, scale: 0
   minnote: 180, hold: 300, smooth: 50, chan: 1, ccout: 0, ccbase: 20 };
 for (let k = 0; k < LINKS; k++) Object.assign(P, { [`m${k}on`]: 1, [`m${k}src`]: 0, [`m${k}lo`]: 0, [`m${k}hi`]: 1,
   [`m${k}curve`]: 0, [`m${k}min`]: 0, [`m${k}max`]: 1, [`m${k}eng`]: 0, [`m${k}take`]: 0, [`m${k}ret`]: 0 });
-for (let s = 0; s < 4; s++) {
-  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1, [`x${s}on`]: 1, [`x${s}eng`]: 0 });
+for (let s = 0; s < 8; s++) {
+  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1, [`x${s}on`]: 1, [`x${s}sw`]: 0, [`x${s}swm`]: 0, [`fxo${s}`]: s ? 0 : 1 });
   for (let k = 0; k < 6; k++) P[`x${s}p${k}`] = 0.5;
   for (let j = 0; j < 7; j++) Object.assign(P, { [`x${s}m${j}s`]: 0, [`x${s}m${j}a`]: 0.5 });
 }
@@ -395,7 +437,8 @@ Object.assign(P, { vlook: 2, vtheme: 0, vcam: 1, vfxh: 1, vcues: 1, vfmt: 0 });
 const S = {
   target: [null, null], drawn: [null, null], fade: [0, 0], aspect: 16 / 9,
   expr: new Array(10).fill(0), exprDrawn: new Array(10).fill(0),
-  gest: new Array(8).fill(0), held: new Array(80).fill(0), linkState: new Array(LINKS).fill(0),
+  gest: new Array(8).fill(0), thumb: [0, 0], linkState: new Array(LINKS).fill(0),
+  fxSel: null, fxClip: null, fxEnv: new Array(8).fill(1),
   table: [[2,0,-1],[2,3,-1],[2,4,-1],[2,5,-1],[1,0,0],[1,1,0],[1,2,0],[1,4,0]],
   notes: [], scaleRoot: 0, scaleSteps: [0,2,4,5,7,9,11], selected: 4,
   maps: new Array(LINKS).fill("<none>"), listening: new Array(LINKS).fill(0), pending: new Array(LINKS).fill(false),
@@ -457,7 +500,7 @@ function onHands(...a) {
 }
 function onExpr(...v) {
   S.expr = v.slice(0, 10);
-  if (v.length >= 98) { S.gest = v.slice(10, 18); S.held = v.slice(18, 98); }
+  if (v.length >= 20) { S.gest = v.slice(10, 18); S.thumb = v.slice(18, 20); }
   if (S.learning) {
     S.learnMin = S.learnMin ? S.learnMin.map((m, i) => Math.min(m, v[i])) : v.slice();
     S.learnMax = S.learnMax ? S.learnMax.map((m, i) => Math.max(m, v[i])) : v.slice();
@@ -655,8 +698,8 @@ const EXPR_HELP = ["how high the hand is", "where the hand is, left to right", "
 function buildMove() {
   for (let side = 0; side < 2; side++) {
     const box = $(`hand${side}`);
-    box.innerHTML = `<h4>${side ? "Right hand" : "Left hand"}<span class="gest" data-info="Clutch gestures: they light up while this hand makes them. A link or FX slot set to engage on one moves only while you hold it.">${
-      GESTURES.map((g) => `<span>${g}</span>`).join("")}</span></h4>`;
+    box.innerHTML = `<h4>${side ? "Right hand" : "Left hand"}<span class="gest" data-info="Gestures: they light up while this hand makes them. A link set to engage on one moves only while you hold it; an effect can switch on and off with one.">${ICONS.hand}${
+      GESTURES.map((g, i) => `<span>${GESTURE_ICONS[i]}${g}</span>`).join("")}<span class="tmeter" data-info="Thumb: how far the thumb is from the hand. Below the left mark counts as thumb in, past the right mark as thumb out."><i></i><b style="left:${0.25 / THUMB_SCALE * 100}%"></b><b style="left:${0.8 / THUMB_SCALE * 100}%"></b></span></span></h4>`;
     for (let i = 0; i < 5; i++) {
       const idx = side * 5 + i, src = document.createElement("div");
       src.className = "src"; src.id = `src${idx}`;
@@ -679,6 +722,7 @@ function buildMove() {
       <button class="x" data-info="Remove this link.">✕</button>
       <span></span>
       <div class="eng">
+        <span class="englabel" data-info="Engage: Always, or only while you hold a gesture. Let go and the parameter stays where it is.">${ICONS.hand}Engage</span>
         <select class="engsel" data-info="Engage: Always, or only while you hold a gesture. Let go and the parameter stays where it is.">${ENGAGE_OPTIONS}</select>
         <div class="seg take"><button data-v="0" data-info="Jump: when the link engages, the parameter goes straight to your hand's value.">Jump</button><button data-v="1" data-info="Grab: the parameter stays where it is and moves by however far your hand moves, like grabbing a knob. No jumps.">Grab</button><button data-v="2" data-info="Pickup: the parameter waits until your hand passes its value, then follows.">Pickup</button></div>
         <button class="tog ret" data-info="Return: when you let go, the parameter goes back to where it was when the link engaged.">Return</button>
@@ -829,12 +873,24 @@ function buildFx() {
   const options = `<option value="0">— no effect —</option>` + MHFX.GROUPS.map((g) => `<optgroup label="${g}">` +
     MHFX.list.map((fx, i) => [fx, i]).filter(([fx]) => fx.group === g).map(([fx, i]) => `<option value="${i + 1}">${fx.name}</option>`).join("") + "</optgroup>").join("");
   const sources = sourceOptions();
+  const gestures = `<option value="0">no gesture</option>` + ENGAGE_OPTIONS.replace(/^<option value="0">Always<\/option>/, "");
   for (let s = 0; s < MHFX.SLOTS; s++) {
-    const c = document.createElement("div"); c.className = "panel fxcard"; c.id = `fxs${s}`;
-    c.innerHTML = `<div class="fxhead"><span class="num">FX ${s + 1}</span><button class="tog fxon" data-info="This slot on/off: off skips the effect and keeps its settings. Automatable.">On</button><select class="fxsel" data-info="The effect in this slot. Effects run top to bottom.">${options}</select><select class="fxeng" data-info="Engage: hand movements move this slot's knobs always, or only while you hold a gesture. Let go and the knobs stay where they are.">${ENGAGE_OPTIONS}</select></div><div class="fxknobs"></div>`;
+    const c = document.createElement("div"); c.className = "panel fxcard"; c.id = `fxs${s}`; c.dataset.slot = s;
+    c.innerHTML = `<div class="fxhead">
+        <span class="grip" data-info="Drag to move this effect: the chain runs top to bottom.">${GRIP}</span>
+        <span class="num" data-info="FX ${s + 1}: its knobs are the Live parameters named FX${s + 1} (automation stays with the effect when you move it).">FX ${s + 1}</span>
+        <button class="tog fxon" data-info="This effect on/off. Off skips it and keeps its settings. Automatable, and a gesture can switch it.">On</button>
+        <select class="fxsel" data-info="The effect in this slot.">${options}</select>
+        <span class="sw" data-info="Switch: a gesture turns this effect on and off. Hold: on while you hold it. Toggle: each gesture flips it.">${ICONS.hand}<select class="fxsw">${gestures}</select>
+          <span class="seg swm"><button data-v="0">Hold</button><button data-v="1">Toggle</button></span></span>
+        <button class="more" data-info="Copy, paste, duplicate or delete this effect (⌘C, ⌘V, ⌘D, Delete).">⋯</button></div><div class="fxknobs"></div>`;
+    c.onpointerdown = () => selectFx(s);
     c.querySelector(".fxsel").onchange = (e) => chooseEffect(s, +e.target.value);
     c.querySelector(".fxon").onclick = () => setParam(`x${s}on`, P[`x${s}on`] === 0 ? 1 : 0);
-    c.querySelector(".fxeng").onchange = (e) => setParam(`x${s}eng`, +e.target.value);
+    c.querySelector(".fxsw").onchange = (e) => { setParam(`x${s}sw`, +e.target.value); if (+e.target.value) message(`FX ${s + 1} switches with ${ENGAGE[+e.target.value]} (${P[`x${s}swm`] ? "toggle" : "on while held"}).`); };
+    c.querySelector(".swm").onclick = (e) => { const b = e.target.closest("button"); if (b) setParam(`x${s}swm`, +b.dataset.v); };
+    c.querySelector(".more").onclick = (e) => { e.stopPropagation(); fxMenu(s, e.currentTarget); };
+    dragFx(c.querySelector(".grip"), s);
     const knobs = c.querySelector(".fxknobs");
     for (let j = 0; j < 7; j++) {
       const key = j === 0 ? `x${s}mix` : `x${s}p${j - 1}`;
@@ -855,6 +911,13 @@ function buildFx() {
     }
     box.appendChild(c);
   }
+  const add = document.createElement("button");
+  add.className = "tog fxadd"; add.id = "fxAdd"; add.textContent = "+ Add effect";
+  add.dataset.info = `Add an effect at the end of the chain (up to ${MHFX.SLOTS}).`;
+  add.onclick = () => addFx();
+  box.appendChild(add);
+  document.addEventListener("keydown", fxKeys);
+  document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".fxmenu")) closeFxMenu(); });
   for (const [id, key] of [["lookSeg", "vlook"], ["themeSeg", "vtheme"], ["fmtSeg", "vfmt"]])
     $(id).onclick = (e) => { const b = e.target.closest("button"); if (b) setParam(key, +b.dataset.v); };
   $("fxHandsTog").onclick = () => setParam("vfxh", P.vfxh ? 0 : 1);
@@ -899,8 +962,8 @@ function updateAudioChips() {
     chip.querySelectorAll(".bars i").forEach((bar, f) => { bar.style.height = `${Math.round(S.audio[c * 5 + f] * 16)}px`; });
   });
 }
-// Modulation sources: hand movements, their held copies per clutch gesture, the audio letters (see MHFX.values).
-const mods = () => ({ expr: S.exprDrawn, held: S.held, audio: S.audio });
+// Modulation sources: the hand movements, then the audio letters (see MHFX.values).
+const mods = () => ({ expr: S.exprDrawn, audio: S.audio });
 function chooseEffect(s, index) {
   setParam(`x${s}fx`, index);
   const fx = MHFX.list[index - 1];
@@ -917,13 +980,21 @@ function renderFxBar() {
 function renderFx() {
   if (!$("fxSlots").children.length) return;
   renderFxBar();
+  const box = $("fxSlots"), order = MHFX.chain(P);
+  for (let s = 0; s < MHFX.SLOTS; s++) $(`fxs${s}`).style.display = order.includes(s) ? "" : "none";
+  for (const s of order) box.appendChild($(`fxs${s}`));   // the chain's order, top to bottom
+  box.appendChild($("fxAdd"));
+  $("fxAdd").disabled = order.length >= MHFX.SLOTS;
   for (let s = 0; s < MHFX.SLOTS; s++) {
-    const c = $(`fxs${s}`), fx = MHFX.list[(P[`x${s}fx`] | 0) - 1];
+    const c = $(`fxs${s}`), fx = MHFX.list[(P[`x${s}fx`] | 0) - 1], sw = P[`x${s}sw`] | 0;
     c.querySelector(".fxsel").value = P[`x${s}fx`] | 0;
-    c.querySelector(".fxeng").value = P[`x${s}eng`] | 0;
     c.querySelector(".fxon").classList.toggle("on", P[`x${s}on`] !== 0);
+    c.querySelector(".fxsw").value = sw;
+    c.querySelector(".sw").classList.toggle("set", !!sw);
+    c.querySelectorAll(".swm button").forEach((b) => b.classList.toggle("on", +b.dataset.v === (P[`x${s}swm`] | 0)));
     c.classList.toggle("empty", !fx);
     c.classList.toggle("bypass", P[`x${s}on`] === 0);
+    c.classList.toggle("sel", S.fxSel === s);
     c.querySelectorAll(".fxknob").forEach((cell, j) => {
       const name = j === 0 ? "Mix" : (fx && fx.knobs[j - 1] ? fx.knobs[j - 1].name : "");
       cell.style.visibility = fx && name ? "" : "hidden";
@@ -941,9 +1012,106 @@ function renderFx() {
     });
   }
 }
+// ---- the effect chain: add, delete, copy, paste, duplicate, move -------------------------------------
+// A slot's own settings (x<s> + suffix) and their defaults; a free slot has these.
+const FX_KEYS = { fx: 0, mix: 1, ...Object.fromEntries([0, 1, 2, 3, 4, 5].map((k) => [`p${k}`, 0.5])),
+  ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6].flatMap((j) => [[`m${j}s`, 0], [`m${j}a`, 0.5]])), on: 1, sw: 0, swm: 0 };
+function writeChain(order) { for (let k = 0; k < MHFX.SLOTS; k++) setParam(`fxo${k}`, k < order.length ? order[k] + 1 : 0); }
+function freeFx() { const used = MHFX.chain(P); for (let s = 0; s < MHFX.SLOTS; s++) if (!used.includes(s)) return s; return -1; }
+function fillFx(s, values) { for (const [k, d] of Object.entries(FX_KEYS)) setParam(`x${s}${k}`, values ? values[k] ?? d : d); }
+function selectFx(s) { if (S.fxSel !== s) { S.fxSel = s; renderFx(); } }
+// Puts a slot into the chain after `after` (or at the end) with these settings (or empty).
+function insertFx(values, after) {
+  const s = freeFx();
+  if (s < 0) { message(`The chain is full: ${MHFX.SLOTS} effects at most.`); return -1; }
+  fillFx(s, values);
+  const order = MHFX.chain(P), at = order.indexOf(after);
+  order.splice(at < 0 ? order.length : at + 1, 0, s);
+  writeChain(order);
+  S.fxSel = s; renderFx();
+  return s;
+}
+function addFx() { insertFx(null, -1); }
+function deleteFx(s) {
+  const order = MHFX.chain(P), at = order.indexOf(s);
+  if (at < 0) return;
+  order.splice(at, 1);
+  writeChain(order);
+  fillFx(s, null);   // empty again, so it does not come back as an older Set's effect
+  S.fxSel = order.length ? order[Math.min(at, order.length - 1)] : null;
+  message(`FX ${s + 1} deleted.`); renderFx();
+}
+function copyFx(s) {
+  const values = Object.fromEntries(Object.keys(FX_KEYS).map((k) => [k, P[`x${s}${k}`]]));
+  S.fxClip = values;
+  try { localStorage.setItem("mh-fx-clip", JSON.stringify(values)); } catch (e) {}   // other MidiHands devices can paste it
+  const fx = MHFX.list[(values.fx | 0) - 1];
+  message(`Copied FX ${s + 1}${fx ? ` (${fx.name})` : ""}.`);
+}
+function pasteFx(after) {
+  let clip = S.fxClip;
+  try { clip = JSON.parse(localStorage.getItem("mh-fx-clip")) || clip; } catch (e) {}
+  if (!clip) { message("Nothing to paste: copy an effect first (⌘C)."); return; }
+  const s = insertFx(clip, after);
+  if (s >= 0) message(`Pasted as FX ${s + 1}.`);
+}
+function duplicateFx(s) {
+  const n = insertFx(Object.fromEntries(Object.keys(FX_KEYS).map((k) => [k, P[`x${s}${k}`]])), s);
+  if (n >= 0) message(`Duplicated FX ${s + 1} as FX ${n + 1}.`);
+}
+function fxKeys(e) {
+  const t = e.target;
+  if (!$("fx").classList.contains("on") || S.fxSel == null || (t && t.closest && t.closest("select, input"))) return;
+  const cmd = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+  if (cmd && k === "c") copyFx(S.fxSel);
+  else if (cmd && k === "v") pasteFx(S.fxSel);
+  else if (cmd && k === "d") duplicateFx(S.fxSel);
+  else if (!cmd && (e.key === "Backspace" || e.key === "Delete")) deleteFx(S.fxSel);
+  else return;
+  e.preventDefault();
+}
+function closeFxMenu() { document.querySelectorAll(".fxmenu").forEach((m) => m.remove()); }
+function fxMenu(s, anchor) {
+  closeFxMenu(); selectFx(s);
+  const m = document.createElement("div"); m.className = "fxmenu";
+  for (const [label, key, act] of [["Copy", "⌘C", () => copyFx(s)], ["Paste after", "⌘V", () => pasteFx(s)],
+    ["Duplicate", "⌘D", () => duplicateFx(s)], ["Delete", "⌫", () => deleteFx(s)]]) {
+    const b = document.createElement("button"); b.innerHTML = `${label}<kbd>${key}</kbd>`;
+    b.onclick = () => { closeFxMenu(); act(); };
+    m.appendChild(b);
+  }
+  const r = anchor.getBoundingClientRect();
+  m.style.top = `${r.bottom + 2}px`; m.style.right = `${document.documentElement.clientWidth - r.right}px`;
+  document.body.appendChild(m);
+}
+// Drag a card by its grip: a line shows where it lands; dropping rewrites the chain's order.
+function dragFx(grip, s) {
+  grip.onpointerdown = (e) => {
+    e.preventDefault(); selectFx(s);
+    grip.setPointerCapture(e.pointerId);
+    const card = $(`fxs${s}`), line = document.createElement("div");
+    line.className = "fxdrop"; $("fxSlots").appendChild(line); card.classList.add("dragging");
+    let to = -1;
+    grip.onpointermove = (m) => {
+      const others = MHFX.chain(P).filter((o) => o !== s).map((o) => $(`fxs${o}`));
+      to = others.findIndex((c) => m.clientY < c.getBoundingClientRect().top + c.offsetHeight / 2);
+      if (to < 0) to = others.length;
+      const box = $("fxSlots").getBoundingClientRect(), ref = others[to] || $("fxAdd");
+      line.style.top = `${ref.getBoundingClientRect().top - box.top + $("fxSlots").scrollTop - 5}px`;
+    };
+    grip.onpointerup = () => {
+      grip.onpointermove = grip.onpointerup = null;
+      line.remove(); card.classList.remove("dragging");
+      if (to < 0) return;
+      const order = MHFX.chain(P).filter((o) => o !== s);
+      order.splice(to, 0, s);
+      if (order.join() !== MHFX.chain(P).join()) writeChain(order);
+    };
+  };
+}
 // Every frame on the FX page: where modulation has moved each modulated control.
 function updateFxMarkers() {
-  for (let s = 0; s < MHFX.SLOTS; s++) {
+  for (const s of MHFX.chain(P)) {
     if (!(P[`x${s}fx`] | 0) || P[`x${s}on`] === 0) continue;
     $(`fxs${s}`).querySelectorAll(".fxknob").forEach((cell, j) => {
       if (!(P[`x${s}m${j}s`] | 0)) return;
@@ -1008,6 +1176,7 @@ function step(dt) {
     }
   }
   for (let i = 0; i < 10; i++) S.exprDrawn[i] = S.expr[i] || 0;
+  if (window.MHFX) MHFX.fade(P, S.fxEnv, dt);
 }
 function drawOverlay() {
   const cv = $("overlay"), g = cv.getContext("2d"), W = cv.width, H = cv.height, dpr = devicePixelRatio;
@@ -1048,14 +1217,11 @@ function cueList() {
   for (let k = 0; k < LINKS; k++) if (S.maps[k] !== "<none>" && P[`m${k}on`]) used.add(P[`m${k}src`]);
   return P.vcues ? [...used] : [];
 }
-// Clutch gestures that engage something (links, FX slots with hand modulation), shown on the hands.
+// Clutch gestures in use (links, effects switched by a gesture), shown on the hands.
 function clutchList() {
   const used = new Set();
   for (let k = 0; k < LINKS; k++) if (S.maps[k] !== "<none>" && P[`m${k}on`] && P[`m${k}eng`]) used.add(P[`m${k}eng`]);
-  for (let s = 0; s < 4; s++) {
-    if (!(P[`x${s}fx`] | 0) || P[`x${s}on`] === 0 || !P[`x${s}eng`]) continue;
-    for (let j = 0; j < 7; j++) { const src = P[`x${s}m${j}s`] | 0; if (src && src <= 10) used.add(P[`x${s}eng`]); }
-  }
+  if (window.MHFX) for (const s of MHFX.chain(P)) if ((P[`x${s}fx`] | 0) && P[`x${s}sw`]) used.add(P[`x${s}sw`]);
   return P.vcues ? [...used] : [];
 }
 function renderPicture(fxPage, time) {
@@ -1067,7 +1233,7 @@ function renderPicture(fxPage, time) {
     aspect: fxPage ? MHFX.FORMATS[P.vfmt] || 0 : 0, brackets: !!P.vcues,
   });
   R.setHands(hands); R.setExpr(S.exprDrawn); R.setGestures(S.gest);
-  R.setFx(fxPage ? MHFX.slots(P, mods()) : []);
+  R.setFx(fxPage ? MHFX.slots(P, mods(), S.fxEnv) : []);
   R.render(time);
 }
 // Note labels above the fingertips, on the 2D overlay.
@@ -1106,7 +1272,13 @@ function frame(now) {
       const row = $(`src${i}`), v = S.exprDrawn[i];
       row.querySelector(".bar i").style.width = `${v * 100}%`; row.querySelector("em").textContent = Math.round(v * 100);
     }
-    for (let s = 0; s < 2; s++) $(`hand${s}`).querySelectorAll(".gest span").forEach((chip, g) => chip.classList.toggle("on", S.gest[s * 4 + g] > 0.5));
+    for (let s = 0; s < 2; s++) {
+      const box = $(`hand${s}`);
+      box.querySelectorAll(".gest > span:not(.tmeter)").forEach((chip, g) => chip.classList.toggle("on", S.gest[s * 4 + g] > 0.5));
+      const meter = box.querySelector(".tmeter i"), span = S.thumb[s] || 0;
+      meter.style.width = `${clamp(span / THUMB_SCALE, 0, 1) * 100}%`;
+      meter.className = S.gest[s * 4] > 0.5 || S.gest[s * 4 + 1] > 0.5 ? "on" : "";
+    }
     for (let k = 0; k < LINKS; k++) {
       if (!linkUsed(k)) continue;
       const c = $(`link${k}`), v = S.exprDrawn[P[`m${k}src`]] || 0;
@@ -1190,7 +1362,7 @@ function demo() {
     const ex = [.45 + Math.sin(t * .5) * .1, .3, .2, .1, .5, .5 + Math.cos(t * .7) * .3, .7, (Math.sin(t) + 1) / 2, .2, .55];
     const fist = Math.sin(t * .35) > 0;   // demo: the left fist engages link 2
     const gest = [0, 0, fist ? 1 : 0, 0, 0, 0, 0, 0];
-    onExpr(...ex, ...gest, ...[...Array(8)].flatMap(() => ex));
+    onExpr(...ex, ...gest, .55 + Math.sin(t * .6) * .3, .5);
     if (S.linkState[1] !== (fist ? 1 : 0)) onLinkstate(1, fist ? 1 : 0, 2);
     const beat = Math.exp(-((t * 2) % 1) * 4);   // demo: drums at 120 BPM on letter A
     onAudio(.6 + beat * .3, .3 + beat * .6, .45, .3 + Math.random() * .2, beat);

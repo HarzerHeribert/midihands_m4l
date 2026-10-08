@@ -167,6 +167,7 @@ Output Engine::process(const Frame& raw) {
     }
 
     out.gestures[s] = clutch_[s].apply(f, usable, now);
+    out.thumbSpan[s] = clutch_[s].span();
 
     if (hand.present) {
       const float values[5] = {f.height, f.x, f.pinch, f.fist, f.tilt};

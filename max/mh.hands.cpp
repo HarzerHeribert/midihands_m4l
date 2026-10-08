@@ -26,12 +26,13 @@
 //   links (core/links): linkset <k> <on|src|lo|hi|curve|min|max|eng|take|ret> <value>,
 //     linktarget <k> <id> (the linked parameter, 0 = none), linkvalue <k> <0-1 | -1>
 //     (answer to "read"), movement 0/1 (the Movement switch), linksready (Live's API is up)
+//   effect slots switched by a gesture (core/clutch SlotSwitches): fxset <slot> <on|sw|swm> <value>
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
 //   1 expression values: 10 floats 0-1 (see kExprNames), then 8 clutch gestures 0/1
-//     (left thumb out, thumb in, fist, pinky, then right), then 8 x 10 held movements
-//     (core/links HeldMovements, one set per gesture in that order)
+//     (left thumb out, thumb in, fist, pinky, then right), then the left and right thumb
+//     span (what thumb in/out compare, 0 without a hand)
 //   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
 //   3 info: cameras, status, stats, error, picture <url>, assets <url> (Live's fonts),
 //      version <x.y.z>, update available|current|unknown|installing|installed|failed [text],
@@ -39,7 +40,8 @@
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
 //      scaleinfo <root> <intervals...>, linkstate <16 x 0 idle | 1 moving | 2 waiting>
 //   4 links, for each link's live.remote~: link <k> value <0-1> <ramp ms>, link <k> attach,
-//      link <k> detach; read <k> (ask for the parameter's value)
+//      link <k> detach; read <k> (ask for the parameter's value); fxon <slot> <0|1> (a
+//      gesture switched an effect slot: set its On parameter)
 #include "ext.h"
 #include "ext_obex.h"
 
@@ -82,7 +84,7 @@ const std::vector<ScaleType>& scaleTypes() {
 }
 
 constexpr int kViewFloats = 1 + mh::kSides * (1 + mh::kLandmarks * 2 + 4);
-constexpr int kExprFloats = mh::kExpr + mh::kClutches + mh::kClutches * mh::kExpr;
+constexpr int kExprFloats = mh::kExpr + mh::kClutches + mh::kSides;
 
 // Links and their timeouts run on one clock, whatever the camera does.
 double nowSeconds() {
@@ -98,8 +100,10 @@ struct State {
   std::vector<mh::MidiEvent> pendingMidi;
   std::array<float, mh::kExpr> expr{};
   mh::Gestures gestures{};
-  mh::HeldMovements held;
+  std::array<float, mh::kSides> thumbSpan{};
   bool exprFresh = false;
+  mh::SlotSwitches switches;
+  std::vector<mh::SlotSwitch> pendingSwitches;
   mh::Links links;
   std::vector<mh::LinkEvent> pendingLinks;
   std::array<int, mh::Links::kLinks> linkStates{};
@@ -163,6 +167,7 @@ static void mh_linksUpdate(t_mh_hands* x) {
   State* st = x->st;
   const double now = nowSeconds();
   st->links.update(now, st->pendingLinks);
+  st->switches.update(st->gestures, st->pendingSwitches);
   for (int k = 0; k < mh::Links::kLinks; ++k) {
     const int state = st->links.state(k);
     if (state != st->linkStates[k]) {
@@ -179,12 +184,14 @@ static void mh_linksUpdate(t_mh_hands* x) {
 static void mh_flush(t_mh_hands* x) {
   std::vector<mh::MidiEvent> midi;
   std::vector<mh::LinkEvent> links;
+  std::vector<mh::SlotSwitch> switches;
   t_atom values[kExprFloats];
   bool fresh = false;
   {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     midi.swap(x->st->pendingMidi);
     links.swap(x->st->pendingLinks);
+    switches.swap(x->st->pendingSwitches);
     fresh = x->st->exprFresh;
     x->st->exprFresh = false;
     if (fresh) {
@@ -192,8 +199,7 @@ static void mh_flush(t_mh_hands* x) {
       for (float v : x->st->expr) atom_setfloat(values + n++, v);
       for (const auto& side : x->st->gestures)
         for (bool g : side) atom_setfloat(values + n++, g ? 1.0 : 0.0);
-      for (int c = 1; c <= mh::kClutches; ++c)
-        for (int i = 0; i < mh::kExpr; ++i) atom_setfloat(values + n++, x->st->held.value(c, i));
+      for (float span : x->st->thumbSpan) atom_setfloat(values + n++, span);
     }
   }
   for (const mh::MidiEvent& e : midi) {
@@ -216,6 +222,12 @@ static void mh_flush(t_mh_hands* x) {
     atom_setfloat(a + 2, e.value);
     atom_setfloat(a + 3, e.rampMs);
     outlet_anything(x->outLinks, gensym("link"), e.kind == mh::LinkEvent::Value ? 4 : 2, a);
+  }
+  for (const mh::SlotSwitch& sw : switches) {
+    t_atom a[2];
+    atom_setlong(a, sw.slot);
+    atom_setlong(a + 1, sw.on ? 1 : 0);
+    outlet_anything(x->outLinks, gensym("fxon"), 2, a);
   }
 }
 
@@ -351,6 +363,7 @@ static void mh_stop(t_mh_hands* x) {
     x->st->view = mh::Output{};
     // No camera, no clutch gestures: clutched links let go; the rest keep their value.
     x->st->gestures = mh::Gestures{};
+    x->st->thumbSpan = {};
     x->st->links.setInput(x->st->expr, x->st->gestures);
     mh_linksUpdate(x);
   }
@@ -546,7 +559,7 @@ static void mh_start(t_mh_hands* x) {
           st->pendingMidi.insert(st->pendingMidi.end(), out.midi.begin(), out.midi.end());
           st->expr = out.expr;
           st->gestures = out.gestures;
-          st->held.apply(out.expr, out.gestures);
+          st->thumbSpan = out.thumbSpan;
           st->links.setInput(out.expr, out.gestures);
           mh_linksUpdate(x);
           st->exprFresh = true;
@@ -665,6 +678,23 @@ static void mh_linkvalue(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
   mh_linkEdit(x, [&](mh::Links& links) { links.parameterValue(k, v); });
 }
 
+// fxset <slot> <on|sw|swm> <value>: an effect slot's On switch, gesture and mode
+static void mh_fxset(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  if (argc < 3 || atom_gettype(argv + 1) != A_SYM) return;
+  const int slot = static_cast<int>(atom_getlong(argv));
+  const std::string key = atom_getsym(argv + 1)->s_name;
+  const int v = static_cast<int>(atom_getlong(argv + 2));
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    mh::SlotSwitches& sw = x->st->switches;
+    if (key == "on") sw.setOn(slot, v != 0);
+    else if (key == "sw") sw.setGesture(slot, std::clamp(v, 0, mh::kClutches));
+    else if (key == "swm") sw.setMode(slot, v);
+    mh_linksUpdate(x);
+  }
+  clock_fdelay(x->flushClock, 0.0);
+}
+
 static void mh_movement(t_mh_hands* x, long on) {
   mh_linkEdit(x, [&](mh::Links& links) { links.setMovement(on != 0); });
 }
@@ -722,7 +752,7 @@ static void mh_assist(t_mh_hands*, void*, long io, long index, char* text) {
   }
   static const char* outlets[] = {"MIDI bytes (to midiout)", "Expressions: L height x pinch fist tilt, R ..., gestures, held",
                                   "Hand view data", "Info: cameras, status, stats, error, picture, fingers",
-                                  "Links: link <k> value|attach|detach, read <k>"};
+                                  "Links: link <k> value|attach|detach, read <k>, fxon <slot> <0|1>"};
   std::snprintf(text, 256, "%s", outlets[std::clamp<long>(index, 0, 4)]);
 }
 
@@ -794,6 +824,7 @@ void ext_main(void*) {
   class_addmethod(c, reinterpret_cast<method>(mh_linktarget), "linktarget", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_linkvalue), "linkvalue", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_movement), "movement", A_LONG, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_fxset), "fxset", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_linksready), "linksready", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_anything), "anything", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_assist), "assist", A_CANT, 0);

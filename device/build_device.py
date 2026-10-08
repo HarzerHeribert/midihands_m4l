@@ -17,7 +17,7 @@ replaces the "---" prefix with an id unique to each device instance:
   ---mh_in       settings and commands -> mh.hands
   ---mh_boot     device finished loading (resend stored settings)
   ---mh_open     the editor window was opened
-  ---mh_expr     ten hand-movement values, clutch gestures and held movements, every frame
+  ---mh_expr     ten hand-movement values, clutch gestures and thumb spans, every frame
   ---mh_link     what each link's live.remote~ does (mh.hands decides, core/links)
   ---mh_view     hand drawing data, every frame
   ---mh_info     status, stats, error, picture url, finger layout
@@ -50,7 +50,8 @@ LINKS = 16  # movement -> Live parameter links; any number may share a movement
 GESTURES = ["Thumb Out", "Thumb In", "Fist", "Pinky"]
 ENGAGE = ["Always"] + [f"{side} {g}" for side in "LR" for g in GESTURES]
 TAKEOVER = ["Jump", "Grab", "Pickup"]  # order = core/links.hpp Takeover
-FX_SLOTS = 4  # video effect chain length; each slot: effect, mix, six knobs, a modulation per control
+FX_SLOTS = 8  # effect slots; each: effect, mix, six knobs, a modulation per control, On, switch gesture
+FX_SLOTS_V1 = 4  # slots up to 0.3.0, whose parameters keep their places
 VIDEO_SIZE = (960.0, 540.0)
 FORMATS = ["16:9", "9:16", "1:1", "4:5"]
 AUDIO_LETTERS = "ABCDEFGH"  # MidiHands Audio devices send as one of these
@@ -256,20 +257,8 @@ def stored_params() -> list[tuple]:
         ("vcues", "Gesture Cues", "enum", 0, 1, 1, 1, ["off", "on"]),
         ("vfmt", "Video Format", "enum", 0, 3, 0, 1, FORMATS),
     ]
-    effects = ["None"] + effect_names()
-    for s in range(FX_SLOTS):
-        n = s + 1
-        params += [
-            (f"x{s}fx", f"FX{n} Effect", "enum", 0, len(effects) - 1, 0, 0, effects),
-            (f"x{s}mix", f"FX{n} Mix", "float", 0, 1, 1.0, 0, None),
-        ]
-        params += [(f"x{s}p{k}", f"FX{n} Knob {k + 1}", "float", 0, 1, 0.5, 0, None) for k in range(6)]
-        for j in range(7):  # 0 = mix, 1..6 = knobs
-            what = "Mix" if j == 0 else f"Knob {j}"
-            params += [
-                (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, len(MOD_SOURCES) - 1, 0, 1, MOD_SOURCES),
-                (f"x{s}m{j}a", f"FX{n} {what} Mod Amount", "float", -1, 1, 0.5, 1, None),
-            ]
+    for s in range(FX_SLOTS_V1):
+        params += fx_slot_params(s)
     # Added in 0.4.0, at the end so the parameters of older Sets keep their places.
     for k in range(LINKS):
         params += [
@@ -277,10 +266,36 @@ def stored_params() -> list[tuple]:
             (f"m{k}take", f"Link {k + 1} Takeover", "enum", 0, len(TAKEOVER) - 1, 0, 1, TAKEOVER),
             (f"m{k}ret", f"Link {k + 1} Return", "enum", 0, 1, 0, 1, ["off", "on"]),
         ]
+    for s in range(FX_SLOTS_V1, FX_SLOTS):
+        params += fx_slot_params(s)
     for s in range(FX_SLOTS):
         params += [
             (f"x{s}on", f"FX{s + 1} On", "enum", 0, 1, 1, 0, ["off", "on"]),
-            (f"x{s}eng", f"FX{s + 1} Engage", "enum", 0, len(ENGAGE) - 1, 0, 1, ENGAGE),
+            (f"x{s}sw", f"FX{s + 1} Switch Gesture", "enum", 0, len(ENGAGE) - 1, 0, 1, ["None"] + ENGAGE[1:]),
+            (f"x{s}swm", f"FX{s + 1} Switch Mode", "enum", 0, 1, 0, 1, ["Hold", "Toggle"]),
+        ]
+    # The effect chain: which slot runs at each place (0 = none). Moving an effect only
+    # changes this, so a slot's parameters, and their automation, stay with its effect.
+    slots = ["None"] + [f"FX{s + 1}" for s in range(FX_SLOTS)]
+    params += [(f"fxo{k}", f"FX Chain {k + 1}", "enum", 0, FX_SLOTS, 1 if k == 0 else 0, 1, slots)
+               for k in range(FX_SLOTS)]
+    return params
+
+
+def fx_slot_params(s: int) -> list[tuple]:
+    """An effect slot's effect, mix, knobs and their modulation."""
+    n = s + 1
+    effects = ["None"] + effect_names()
+    params = [
+        (f"x{s}fx", f"FX{n} Effect", "enum", 0, len(effects) - 1, 0, 0, effects),
+        (f"x{s}mix", f"FX{n} Mix", "float", 0, 1, 1.0, 0, None),
+    ]
+    params += [(f"x{s}p{k}", f"FX{n} Knob {k + 1}", "float", 0, 1, 0.5, 0, None) for k in range(6)]
+    for j in range(7):  # 0 = mix, 1..6 = knobs
+        what = "Mix" if j == 0 else f"Knob {j}"
+        params += [
+            (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, len(MOD_SOURCES) - 1, 0, 1, MOD_SOURCES),
+            (f"x{s}m{j}a", f"FX{n} {what} Mod Amount", "float", -1, 1, 0.5, 1, None),
         ]
     return params
 
@@ -374,7 +389,13 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(video_cmds, 0, strip_keys)
     for i, name in enumerate(("s ---mh_notes_set", "s ---mh_move_set")):
         e.connect(strip_keys, i, e.obj(name, 160 + 130 * i, 280))
-    setter = e.obj("route " + " ".join(keys), 20, 300)
+    # "<key> <value>" to its parameter: routes of at most 128 keys, each passing what it
+    # does not know to the next (one route with every key would need 400+ outlets).
+    chunks = [keys[i:i + 128] for i in range(0, len(keys), 128)]
+    routes = [e.obj("route " + " ".join(c), 20 + 400 * i, 300) for i, c in enumerate(chunks)]
+    for a, b in zip(routes, routes[1:]):
+        e.connect(a, 128, b)
+    setter = routes[0]
     e.connect(strip_keys, 2, setter)
     resend = e.obj("t b", 20, 330)
     boot = e.obj("r ---mh_boot", 120, 330)
@@ -406,7 +427,7 @@ def build_editor() -> tuple[Patch, dict]:
         e.boxes[-1]["box"].pop("presentation")
         e.boxes[-1]["box"].pop("presentation_rect")
         numbox[key] = box
-        e.connect(setter, n, box)
+        e.connect(routes[n // 128], n % 128, box)
         e.connect(resend, 0, box)
         echo = e.obj(f"prepend param {key}", x, y + 30)
         e.connect(box, 0, echo)
@@ -426,6 +447,10 @@ def build_editor() -> tuple[Patch, dict]:
             k, field = key[1], key[2:]
             msg = {"mode": "fingermode", "deg": "fingerdeg", "oct": "fingeroct"}[field]
             prep = e.obj(f"prepend {msg} {k}", x, y + 60)
+            e.connect(box, 0, prep)
+            e.connect(prep, 0, to_hands)
+        elif m := re.fullmatch(r"x(\d+)(on|sw|swm)", key):
+            prep = e.obj(f"prepend fxset {m[1]} {m[2]}", x, y + 60)
             e.connect(box, 0, prep)
             e.connect(prep, 0, to_hands)
         elif m := re.fullmatch(r"m(\d+)(\w+)", key):
@@ -544,8 +569,15 @@ def build_editor() -> tuple[Patch, dict]:
     answer = e.obj("prepend linkvalue", 1500, 2100)
     e.connect(js_out, 2, answer)
     e.connect(answer, 0, to_hands)
-    from_hands = e.obj("route link read", 1600, 2040)
+    from_hands = e.obj("route link read fxon", 1600, 2040)
     e.connect(e.obj("r ---mh_link", 1600, 2010), 0, from_hands)
+    # A gesture switched an effect slot: set its On parameter, as a click would.
+    fx_route = e.obj("route " + " ".join(str(s) for s in range(FX_SLOTS)), 1800, 2070)
+    e.connect(from_hands, 2, fx_route)
+    for s in range(FX_SLOTS):
+        set_on = e.obj(f"prepend x{s}on", 1800 + 90 * s, 2100)
+        e.connect(fx_route, s, set_on)
+        e.connect(set_on, 0, setter)
     read = e.obj("prepend read", 1700, 2070)
     e.connect(from_hands, 1, read)
     e.connect(read, 0, links_js)

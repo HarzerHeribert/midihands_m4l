@@ -208,18 +208,4 @@ int Links::state(int k) const {
   }
 }
 
-void HeldMovements::apply(const std::array<float, kExpr>& expr, const Gestures& gestures) {
-  if (!primed_) {
-    for (auto& h : held_) h = expr;
-    prev_ = expr;
-    primed_ = true;
-    return;
-  }
-  for (int c = 0; c < kClutches; ++c) {
-    if (!engaged(c + 1, gestures)) continue;
-    for (int i = 0; i < kExpr; ++i) held_[c][i] = clamp01(held_[c][i] + expr[i] - prev_[i]);
-  }
-  prev_ = expr;
-}
-
 }  // namespace mh

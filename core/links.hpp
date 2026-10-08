@@ -106,20 +106,4 @@ class Links {
   Gestures gestures_{};
 };
 
-// Copies of the ten movements that only follow the hand while a clutch is
-// engaged, one copy per clutch gesture (engage 1 .. kClutches), for effect
-// modulation. Released, a copy keeps its value; engaged again, it moves on
-// from there by however far the hand moves, so nothing jumps.
-class HeldMovements {
- public:
-  void apply(const std::array<float, kExpr>& expr, const Gestures& gestures);
-  // Value of movement i for engage option c (1 .. kClutches).
-  float value(int c, int i) const { return held_[c - 1][i]; }
-
- private:
-  bool primed_ = false;
-  std::array<float, kExpr> prev_{};
-  std::array<std::array<float, kExpr>, kClutches> held_{};
-};
-
 }  // namespace mh

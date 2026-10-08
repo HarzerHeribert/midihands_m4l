@@ -126,19 +126,22 @@ with your Set.
 
 ### Engage with a gesture
 
-Under each link, **Engage** chooses when the hand moves the parameter: *Always*, or only
-while you hold a gesture, like a clutch. Hold it, move, let go: the parameter stays where
-you left it, and its automation (if any) plays again.
+Under each link, **Engage** (the hand symbol) chooses when the hand moves the parameter:
+*Always*, or only while you hold a gesture, like a clutch. Hold it, move, let go: the
+parameter stays where you left it, and its automation (if any) plays again.
 
 - **Thumb out**: stick the thumb out to the side, away from the hand.
 - **Thumb in**: tuck the thumb in against the hand or across the palm.
 - **Fist**: close the hand.
-- **Pinky up**: the pinky straight while the other fingers are curled.
+- **Pinky up**: straighten the pinky (whatever the other fingers do, so an open hand counts
+  too: use it from a curled hand).
 
 Each gesture works on either hand, and thumbs never play notes, so a thumb is a good clutch
 on a track that also plays. The gesture buttons next to *Left hand* and *Right hand* light up
-while you make them. A gesture changes some movements of its own hand (a fist changes the
-pinch and the fist), so the link warns you: use the other hand for those.
+while you make them, and the small meter after them shows how far your thumb is from the
+hand: past the right mark counts as thumb out, below the left mark as thumb in. A gesture
+changes some movements of its own hand (a fist changes the pinch and the fist), so the link
+warns you: use the other hand for those.
 
 **Takeover** decides what happens when a link engages and your hand is somewhere else than
 the parameter:
@@ -157,9 +160,12 @@ grab, sweep the filter, let go, and it is back.
 
 The **FX** page turns the camera picture and your hands into a music video.
 
-1. Pick an effect in one of the four slots. They run top to bottom, so a *Glow* after
-   *Neon Edges* makes the edges shine. The effects come in six groups: Color, Stylize,
-   Distort, Feedback (echoes, trails, time warp), Glitch and Simulation.
+1. Pick an effect, and add more with **+ Add effect** (up to eight). They run top to
+   bottom, so a *Glow* after *Neon Edges* makes the edges shine. Drag an effect by its grip
+   to move it; **⋯** (or ⌘C, ⌘V, ⌘D and Delete on the selected effect) copies, pastes,
+   duplicates and deletes. Copied effects paste into other MidiHands devices too. The
+   effects come in six groups: Color, Stylize, Distort, Feedback (echoes, trails, time
+   warp), Glitch and Simulation.
 2. Under any knob, and under **Mix**, choose a hand movement (or a sound, see below), then
    drag the small bar next to it: to the right the movement turns the knob up, to the left
    down. An orange dot on the knob shows where it has moved it. Pinch to zoom a
@@ -168,10 +174,11 @@ The **FX** page turns the camera picture and your hands into a music video.
    **Lines** or **Off**, in Live's cyan and orange or in **Amber**. **Cues** draw what each
    movement is doing right on your hands: the pinch distance, the height, the fist.
 
-Each slot has an **On** switch (automatable: switch effects on and off in your
-arrangement) and an **Engage** menu: its hand modulation can work always, or only while you
-hold a gesture (see [Engage with a gesture](#engage-with-a-gesture)); let go and the knobs stay
-where they are.
+Each effect has an **On** switch (automatable: switch effects on and off in your
+arrangement), and a gesture can switch it (the hand symbol, see
+[Engage with a gesture](#engage-with-a-gesture)): **Hold** shows the effect while you hold
+the gesture, **Toggle** turns it on with one gesture and off with the next. Each effect keeps
+its own Live parameters (FX1 to FX8) wherever you move it, so its automation moves with it.
 
 Effects marked *Follow Hands* move their center to your hands. **Camera** sets how much of
 the camera picture shows: at 0 only the hands and effects remain, on black. Every FX

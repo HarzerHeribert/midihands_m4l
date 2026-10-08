@@ -58,12 +58,12 @@ const send = (...a) => { if (MAX) window.max.outlet(...a); };
 const LOOKS = ["off", "lines", "jelly"], THEMES = ["live", "amber"];
 const P = { vlook: 2, vtheme: 0, vcam: 1, vfxh: 1, vcues: 1, vfmt: 0, notes: 1 };
 for (let k = 0; k < 16; k++) Object.assign(P, { [`m${k}on`]: 1, [`m${k}eng`]: 0 });
-for (let s = 0; s < 4; s++) {
-  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1, [`x${s}on`]: 1, [`x${s}eng`]: 0 });
+for (let s = 0; s < 8; s++) {
+  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1, [`x${s}on`]: 1, [`x${s}sw`]: 0, [`fxo${s}`]: s ? 0 : 1 });
   for (let k = 0; k < 6; k++) P[`x${s}p${k}`] = 0.5;
   for (let j = 0; j < 7; j++) Object.assign(P, { [`x${s}m${j}s`]: 0, [`x${s}m${j}a`]: 0.5 });
 }
-const S = { hands: [null, null], fade: [0, 0], expr: new Array(10).fill(0), gest: new Array(8).fill(0), held: new Array(80).fill(0),
+const S = { hands: [null, null], fade: [0, 0], expr: new Array(10).fill(0), gest: new Array(8).fill(0), fxEnv: new Array(8).fill(1),
   audio: new Array(40).fill(0), recording: false, recStart: 0, url: "" };
 
 const R = window.MHGL ? MHGL.create($("gl")) : null;
@@ -89,7 +89,7 @@ function onHands(...a) {
     S.hands[s] = present ? { pts, on } : null;
   }
 }
-function onExpr(...v) { S.expr = v.slice(0, 10); if (v.length >= 98) { S.gest = v.slice(10, 18); S.held = v.slice(18, 98); } }
+function onExpr(...v) { S.expr = v.slice(0, 10); if (v.length >= 18) S.gest = v.slice(10, 18); }
 function onAudio(...v) { for (let i = 0; i < 40; i++) S.audio[i] = +v[i] || 0; }
 // A sharper picture than the editor's: as wide as this window, up to 1920.
 function pictureUrl() { return S.url ? `${S.url}?w=${Math.min(1920, Math.max(640, Math.round(innerWidth * devicePixelRatio / 320) * 320))}` : ""; }
@@ -136,13 +136,13 @@ function frame(now) {
   for (let s = 0; s < 2; s++) S.fade[s] = S.hands[s] ? 1 : Math.max(0, S.fade[s] - dt / 150);
   const used = MHFX.sources(P), clutches = new Set();
   for (let k = 0; k < 16; k++) if (P[`m${k}on`] && P[`m${k}eng`]) clutches.add(P[`m${k}eng`]);   // links (the editor clears a removed link's)
-  for (let s = 0; s < 4; s++) if ((P[`x${s}fx`] | 0) && P[`x${s}on`] !== 0 && P[`x${s}eng`]) clutches.add(P[`x${s}eng`]);
+  for (const s of MHFX.chain(P)) if ((P[`x${s}fx`] | 0) && P[`x${s}sw`]) clutches.add(P[`x${s}sw`]);   // effects switched by a gesture
   Object.assign(R.options, {
     look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: P.vcues ? [...used] : [], clutches: P.vcues ? [...clutches] : [],
     camera: P.vcam, grade: "none", fxOnHands: !!P.vfxh, aspect: MHFX.FORMATS[P.vfmt] || 16 / 9, brackets: false,
   });
   R.setHands(S.hands); R.setExpr(S.expr); R.setGestures(S.gest);
-  R.setFx(MHFX.slots(P, { expr: S.expr, held: S.held, audio: S.audio }));
+  R.setFx(MHFX.slots(P, { expr: S.expr, audio: S.audio }, MHFX.fade(P, S.fxEnv, dt)));
   R.render(now / 1000);
   if (S.recording) {
     const sec = Math.floor((now - S.recStart) / 1000);
