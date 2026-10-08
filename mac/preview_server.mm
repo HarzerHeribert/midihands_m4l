@@ -1,4 +1,4 @@
-#include "preview_server.hpp"
+#include "../platform/preview_server.hpp"
 
 #import <CoreImage/CoreImage.h>
 #import <CoreVideo/CoreVideo.h>

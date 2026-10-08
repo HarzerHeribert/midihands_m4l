@@ -5,6 +5,17 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Added
+- Windows version (beta): the same devices and editor, with hand tracking on Google's
+  MediaPipe hand models (ONNX Runtime) instead of Apple Vision; it matches the official
+  MediaPipe runtime within a pixel. Installs with `install.ps1` from PowerShell; the Update
+  button installs once Live has quit. Recording the video window is macOS only for now.
+- `install.sh` explains what to run instead when started on Windows (Git Bash, WSL).
+
+### Changed
+- Version checks follow semantic versioning: a pre-release (0.3.0-beta.1) ranks below its
+  release, so beta testers are offered the final version.
+
 ## [0.2.0] - 2026-10-08
 
 ### Added

@@ -1,4 +1,4 @@
-#include "tracker.hpp"
+#include "../platform/tracker.hpp"
 
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>

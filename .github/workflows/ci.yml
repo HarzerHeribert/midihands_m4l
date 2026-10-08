@@ -23,3 +23,66 @@ jobs:
       - name: Device file is the generated one
         run: python3 device/build_device.py && git diff --exit-code -- device/MidiHands.amxd "device/MidiHands Audio.amxd"
       - run: ./build/mh version
+      - name: Windows toolchain and ONNX Runtime
+        run: brew install mingw-w64 && scripts/fetch-onnxruntime.sh
+      - name: MediaPipe hand pipeline (here, on the Mac runtime)
+        run: make test-mediapipe
+      - name: Windows package, cross-compiled
+        run: make dist-windows build/win/mh-track.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-test
+          path: |
+            dist/MidiHands-*-Windows
+            dist/MidiHands-Windows.zip
+            build/win/mh-track.exe
+            tests/data
+
+  # The Windows build on Windows: hand tracking with the shipped runtime and models,
+  # and the installer (from the folder and as the download command does it).
+  windows:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-test
+      - name: Hand tracking
+        shell: powershell
+        run: |
+          $pkg = (Get-ChildItem dist -Directory -Filter "MidiHands-*-Windows").FullName
+          foreach ($case in @(@("thumb_up.jpg", 1), @("right_hands.jpg", 2))) {
+            $out = & build\win\mh-track.exe "$pkg\midihands\support\onnxruntime.dll" "$pkg\midihands\models" "tests\data\$($case[0])" | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "mh-track failed on $($case[0])" }
+            $hands = ($out | ConvertFrom-Json).hands
+            Write-Host "$($case[0]): $($hands.Count) hand(s), sides $($hands.side -join ', ')"
+            if ($hands.Count -ne $case[1]) { throw "expected $($case[1]) hand(s) in $($case[0])" }
+            if ($hands | Where-Object { $_.side -ne "right" }) { throw "expected right hands in $($case[0])" }
+          }
+      - name: Installer from the release folder
+        shell: powershell
+        run: |
+          $pkg = (Get-ChildItem dist -Directory -Filter "MidiHands-*-Windows").FullName
+          & powershell -NoProfile -ExecutionPolicy Bypass -File "$pkg\install.ps1" -Yes
+          $docs = [Environment]::GetFolderPath("MyDocuments")
+          foreach ($f in @("Max 9\Packages\midihands\externals\mh.hands.mxe64", "Max 9\Packages\midihands\externals\mh.audio~.mxe64",
+                           "Max 9\Packages\midihands\support\onnxruntime.dll", "Max 9\Packages\midihands\models\hand_landmarks.onnx",
+                           "Max 9\Packages\midihands\javascript\mh-editor.html",
+                           "Ableton\User Library\Presets\MIDI Effects\Max MIDI Effect\MidiHands.amxd",
+                           "Ableton\User Library\Presets\Audio Effects\Max Audio Effect\MidiHands Audio.amxd")) {
+            if (-not (Test-Path (Join-Path $docs $f))) { throw "missing after install: $f" }
+          }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File "$pkg\uninstall.ps1"
+          if (Test-Path (Join-Path $docs "Max 9\Packages\midihands")) { throw "package left after uninstall" }
+          Write-Host "install and uninstall ok"
+      - name: Installer as the download command runs it (irm | iex)
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 dist\MidiHands-Windows.zip).Hash.ToLower()
+          "$hash  MidiHands-Windows.zip" | Set-Content -Encoding ascii dist\SHA256SUMS
+          $pkg = (Get-ChildItem dist -Directory -Filter "MidiHands-*-Windows").FullName
+          $env:MIDIHANDS_RELEASE_URL = ([Uri](Resolve-Path dist).Path).AbsoluteUri
+          Get-Content "$pkg\install.ps1" -Raw | Invoke-Expression
+          $docs = [Environment]::GetFolderPath("MyDocuments")
+          if (-not (Test-Path (Join-Path $docs "Max 9\Packages\midihands\externals\mh.hands.mxe64"))) { throw "download install failed" }
+          Write-Host "download install ok"

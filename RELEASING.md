@@ -4,7 +4,7 @@ Releases are built and published by GitHub Actions when a `v*` tag is pushed.
 
 1. Make sure `main` is green (CI) and the device works in Live.
 2. Write the changes under `## [Unreleased]` in `CHANGELOG.md`.
-3. Run `scripts/release.sh X.Y.Z`. It sets the version in `VERSION` and
+3. Run `scripts/release.sh X.Y.Z` (the Windows half needs `brew install mingw-w64`). It sets the version in `VERSION` and
    `package/package-info.json`, turns `[Unreleased]` into `[X.Y.Z] - <date>`, builds and
    checks the release zip locally (`make dist`), commits and tags `vX.Y.Z`.
 4. Push: `git push origin main vX.Y.Z`.

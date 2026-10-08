@@ -1,5 +1,6 @@
-// macOS camera capture + Apple Vision hand pose. This is the only
-// platform-specific part of midihands; everything downstream is core/.
+// Camera capture + hand pose: AVFoundation + Apple Vision on macOS
+// (mac/tracker.mm), Media Foundation + MediaPipe hand models on Windows
+// (win/tracker.cpp). Everything downstream is core/.
 #pragma once
 
 #include <functional>

@@ -25,8 +25,9 @@ class PreviewServer {
   int requestedWidth(const std::string& stream) const;
   // Encodes and sends one frame to every client of `stream` that is ready.
   void publish(const std::string& stream, const GrayImage& image);
-  // Color frame (CVPixelBufferRef), mirrored and scaled to `width`, encoded
-  // on the server's own queue; skipped while the previous one is encoding.
+  // Color frame (LumaView::native: CVPixelBufferRef on macOS, BgraImage* on
+  // Windows), mirrored and scaled to `width`, encoded off the capture thread;
+  // skipped while the previous one is encoding.
   void publishPixels(const std::string& stream, const void* pixelBuffer, int width);
 
   struct Impl;  // public so the encoder helpers in the .mm can reach it

@@ -88,8 +88,14 @@ TEST(versions_compare_numerically) {
   CHECK(compareVersions("v0.2.0", "0.1.9") == 1);
   CHECK(compareVersions("0.9.0", "0.10.0") == -1);
   CHECK(compareVersions("1.0", "1.0.0") == 0);
-  CHECK(compareVersions("0.2.0-dev", "0.2.0") == 0);
   CHECK(compareVersions("0.0.0-dev", "0.1.0") == -1);
+  // Prereleases rank below their release, so beta testers are offered the final version.
+  CHECK(compareVersions("0.3.0-beta.1", "0.3.0") == -1);
+  CHECK(compareVersions("0.3.0", "0.3.0-beta.1") == 1);
+  CHECK(compareVersions("0.3.0-beta.1", "0.2.0") == 1);
+  CHECK(compareVersions("0.3.0-beta.2", "0.3.0-beta.10") == -1);
+  CHECK(compareVersions("0.3.0-beta.1", "0.3.0-beta.1") == 0);
+  CHECK(compareVersions("0.3.0-alpha", "0.3.0-beta") == -1);
 }
 
 TEST(landmark_filter_follows_motion_and_can_be_off) {

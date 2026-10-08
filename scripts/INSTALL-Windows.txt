@@ -1,0 +1,33 @@
+MidiHands for Ableton Live (Windows)
+====================================
+
+Camera hand tracking to MIDI, as a Max for Live device.
+
+You need
+  - Windows 10 or 11, 64-bit
+  - Ableton Live 12 Suite, or Live 12 Standard with Max for Live
+  - a camera (built-in or USB)
+
+Install
+  1. Quit Ableton Live.
+  2. Right-click install.ps1 > Run with PowerShell
+     (or in PowerShell, in this folder:  powershell -ExecutionPolicy Bypass -File .\install.ps1).
+  3. Start Live. In the browser: User Library > Presets > MIDI Effects > Max MIDI Effect >
+     MidiHands. Drop it on a MIDI track before an instrument and switch the camera on.
+  4. Optional: MidiHands Audio (Audio Effects > Max Audio Effect) on any track lets its
+     sound move the video effects too.
+
+If the camera does not start: Windows Settings > Privacy & security > Camera > allow
+"Let desktop apps access your camera".
+
+Not on Windows yet: recording the video window (it works on macOS).
+
+Updates
+  Open the device's editor: when a new release exists, an Update button appears. It opens
+  a PowerShell window that installs the update once you quit Live. Or run the install
+  command again:  irm https://github.com/HarzerHeribert/midihands_m4l/releases/latest/download/install.ps1 | iex
+
+Remove
+  Right-click uninstall.ps1 > Run with PowerShell
+
+Project page: https://github.com/HarzerHeribert/midihands_m4l

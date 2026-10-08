@@ -27,12 +27,17 @@ a demo with fake hands, which is the quickest way to work on the UI.
 core/     portable C++17: filters, finger features, hand sides, scales, finger slots and
           presets, note bookkeeping, engine, camera-picture thumbnails, version, and the
           audio analysis for MidiHands Audio (audio: bands, auto level, beats)
-mac/      macOS only: AVFoundation camera + Apple Vision hand pose (tracker), the shared
-          backend that runs one pipeline per camera in use (camera_hub), a loopback MJPEG
-          server for the camera picture (preview_server), release updates (updater), and
+platform/ interfaces of the platform layer, and the camera hub (one pipeline per camera
+          in use, shared by every device)
+mac/      macOS: AVFoundation camera + Apple Vision hand pose (tracker), a loopback MJPEG
+          server for the camera picture (preview_server), release updates (updater),
           recording the video window (recorder: ScreenCaptureKit + AVAssetWriter)
-max/      the Max externals: mh.hands (one per MidiHands, subscribes to the shared backend)
-          and mh.audio~ (one per MidiHands Audio)
+win/      Windows: Media Foundation camera (tracker), Winsock MJPEG server, WinHTTP updates;
+          no recording yet
+track/    MediaPipe's hand landmarker on ONNX Runtime (portable; the Windows tracker uses it)
+models/   the MediaPipe hand models as ONNX (Apache 2.0, see THIRD_PARTY.md)
+max/      the Max externals: mh.hands (one per MidiHands, subscribes to the camera hub)
+          and mh.audio~ (one per MidiHands Audio), plain C++ for both systems
 device/   build_device.py generates MidiHands.amxd and MidiHands Audio.amxd (never edit an
           .amxd by hand)
 package/  the Max package: externals/ (built), javascript/ (strip hand view, editor and video
@@ -44,9 +49,27 @@ docs/     README images, the script that renders them, and render/gallery.html (
           effect side by side; reports shader errors)
 ```
 
-Only `mac/` is platform-specific. A Windows version would need a new tracker there (Media
-Foundation + MediaPipe hand models) and a Windows build of the external; `core/`, the
-device and the editor stay the same. Rules for changing things are in [AGENTS.md](../AGENTS.md).
+Only `mac/` and `win/` are platform-specific; `core/`, `track/`, the devices and the pages
+are shared. Rules for changing things are in [AGENTS.md](../AGENTS.md).
+
+## Windows
+
+The Windows package is cross-compiled on the Mac with MinGW-w64:
+
+```bash
+brew install mingw-w64
+scripts/fetch-onnxruntime.sh      # ONNX Runtime 1.20.1, pinned checksums
+make windows                      # build/win/midihands: the Windows Max package
+make dist-windows                 # dist/MidiHands-Windows.zip and install.ps1
+make test-mediapipe               # the hand pipeline here, on the Mac's ONNX Runtime
+```
+
+The externals are DLLs (`.mxe64`) linked statically, so they need only Windows' and Max's
+own DLLs; `onnxruntime.dll` sits in the package's `support\` folder and is loaded from
+there explicitly. The hand pipeline (`track/`) is a port of MediaPipe Tasks' hand landmarker
+and matched the official runtime within 0.8 px on MediaPipe's test images; keep that parity
+when changing it. CI runs the pipeline (`mh-track.exe`) and the installer on a Windows
+runner.
 
 ## Command-line tool
 

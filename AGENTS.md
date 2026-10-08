@@ -11,16 +11,23 @@ Read README.md first.
 
 ## Rules
 
-- `core/` stays portable C++17: no Apple, Max or Objective-C APIs. Platform code goes in `mac/`.
+- `core/` stays portable C++17: no Apple, Max or Objective-C APIs. Platform code: shared
+  interfaces and the camera hub in `platform/`, implementations in `mac/` (Objective-C++) and
+  `win/`; `track/` is the portable MediaPipe hand pipeline (ONNX Runtime) the Windows tracker
+  uses. `max/mh.hands.cpp` is plain C++ for both systems.
+- Windows is cross-compiled on the Mac with MinGW-w64 (`make windows`, `make dist-windows`);
+  ONNX Runtime comes from `scripts/fetch-onnxruntime.sh` (pinned), the models live in
+  `models/`. CI runs the pipeline and the installer on a real Windows runner. The pipeline
+  must stay in parity with MediaPipe's official runtime (it matched within 0.8 px).
 - The device is generated: edit `device/build_device.py`, then run `make device`.
   Never edit `MidiHands.amxd` by hand.
-- Message names between the patch and `mh.hands` are listed at the top of `max/mh.hands.mm`;
+- Message names between the patch and `mh.hands` are listed at the top of `max/mh.hands.cpp`;
   keep the generator, the external and README in sync when changing them.
 - Expression order (`core/engine.hpp` `Expr`) and scale order (`scaleTypes()` in the external)
   are mirrored in the generator's lists.
 - MIDI and expressions leave the external on Max's scheduler thread; drawing data and the
   camera picture on the main thread. Never call outlets from the capture thread.
-- Cameras are owned by `mac/camera_hub` (one pipeline per camera in use, shared by every
+- Cameras are owned by `platform/camera_hub` (one pipeline per camera in use, shared by every
   device instance). Instances never open cameras themselves.
 - The strip and the editor window talk through `---mh_*` send/receive names (listed at the
   top of `device/build_device.py`). Every Live parameter lives in exactly one of the two views.
@@ -57,9 +64,11 @@ Read README.md first.
 - The version lives in `VERSION` (compiled in as `MH_VERSION`, see `core/version.hpp`);
   releases follow RELEASING.md (`scripts/release.sh`, tag push, Release workflow). Keep
   `CHANGELOG.md` `[Unreleased]` up to date with user-visible changes.
-- `scripts/install.sh` is what users and the device's Update button run: keep it working
-  both from an unzipped release folder and piped from `releases/latest/download/`.
+- `scripts/install.sh` (macOS) and `scripts/install.ps1` (Windows) are what users and the
+  device's Update button run: keep them working both from an unzipped release folder and
+  piped from `releases/latest/download/`. install.ps1 must never `exit` (under `irm | iex`
+  that closes the user's window).
 - README images come from `docs/render/render.sh` (editor demo mode, never a real camera
   picture); re-render after visible UI changes.
-- `mac/updater` talks to GitHub (release check, cached for an hour); nothing else in the
+- `mac/updater` / `win/updater` talk to GitHub (release check, cached for an hour); nothing else in the
   device goes online.

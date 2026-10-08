@@ -26,10 +26,10 @@
 #include "../core/assign.hpp"
 #include "../core/engine.hpp"
 #include "../core/version.hpp"
-#include "../mac/updater.hpp"
+#include "../platform/updater.hpp"
 #include "../core/preview.hpp"
-#include "../mac/camera_hub.hpp"
-#include "../mac/tracker.hpp"
+#include "../platform/camera_hub.hpp"
+#include "../platform/tracker.hpp"
 
 using namespace mh;
 

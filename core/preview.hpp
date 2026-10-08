@@ -16,7 +16,16 @@ struct LumaView {
   int width = 0;
   int height = 0;
   int stride = 0;  // bytes per row
-  const void* native = nullptr;  // the full color frame (CVPixelBufferRef on macOS), if any
+  const void* native = nullptr;  // the full color frame (CVPixelBufferRef on macOS, BgraImage* on Windows), if any
+};
+
+// 32-bit pixels, B G R x in memory (a Windows camera frame). `stride` is bytes
+// per row and negative for bottom-up images (data then points at the top row).
+struct BgraImage {
+  const uint8_t* data = nullptr;
+  int width = 0;
+  int height = 0;
+  int stride = 0;
 };
 
 struct GrayImage {

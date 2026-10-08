@@ -35,7 +35,19 @@ say() { printf '%s\n' "$*"; }
 fail() { printf 'MidiHands install failed: %s\n' "$*" >&2; exit 1; }
 
 # --- prerequisites ---------------------------------------------------------------
-[ "$(uname -s)" = "Darwin" ] || fail "MidiHands needs macOS."
+case "$(uname -s)" in
+  Darwin) ;;
+  MINGW* | MSYS* | CYGWIN*)  # Git Bash and friends on Windows
+    fail "this is the macOS installer. On Windows, run this in PowerShell instead:
+  irm https://github.com/$REPO/releases/latest/download/install.ps1 | iex" ;;
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then  # WSL: Live runs on the Windows side
+      fail "this is the macOS installer. For Live on Windows, run this in PowerShell (not WSL):
+  irm https://github.com/$REPO/releases/latest/download/install.ps1 | iex"
+    fi
+    fail "MidiHands runs on macOS and Windows, where Ableton Live runs." ;;
+  *) fail "MidiHands runs on macOS and Windows." ;;
+esac
 macos_major="$(sw_vers -productVersion | cut -d. -f1)"
 [ "$macos_major" -ge "$MIN_MACOS" ] || fail "MidiHands needs macOS $MIN_MACOS or newer (this Mac has $(sw_vers -productVersion))."
 

@@ -33,10 +33,10 @@
 //      recording 0|1, recorded <path>, recordfail <why>,
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
 //      scaleinfo <root> <intervals...>
-#import <AppKit/AppKit.h>
 #include "ext.h"
 #include "ext_obex.h"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -45,10 +45,11 @@
 
 #include "../core/engine.hpp"
 #include "../core/version.hpp"
-#include "../mac/camera_hub.hpp"
-#include "../mac/preview_server.hpp"
-#include "../mac/recorder.hpp"
-#include "../mac/updater.hpp"
+#include "../platform/camera_hub.hpp"
+#include "../platform/preview_server.hpp"
+#include "../platform/recorder.hpp"
+#include "../platform/shell.hpp"
+#include "../platform/updater.hpp"
 
 namespace {
 
@@ -377,9 +378,7 @@ static void mh_record(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
 
 static void mh_reveal(t_mh_hands*) {
   const std::string file = mh::Recorder::shared().lastFile();
-  if (file.empty()) return;
-  NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:file.c_str()]];
-  [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ url ]];
+  if (!file.empty()) mh::revealFile(file);
 }
 
 static void mh_checkupdate(t_mh_hands* x) {

@@ -12,6 +12,7 @@ own visualizer, ready to record for Instagram, TikTok or YouTube.
 
 [![Latest release](https://img.shields.io/github/v/release/HarzerHeribert/midihands_m4l?label=release&color=ffad56)](https://github.com/HarzerHeribert/midihands_m4l/releases/latest)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-3a3a3a)
+![Windows 10+ (beta)](https://img.shields.io/badge/Windows-10%2B%20beta-3a3a3a)
 ![Ableton Live 12 with Max for Live](https://img.shields.io/badge/Ableton%20Live-12%20%2B%20Max%20for%20Live-3a3a3a)
 
 [Install](#install) · [Quick start](#quick-start) · [Play](#play-notes-and-chords) ·
@@ -27,8 +28,9 @@ own visualizer, ready to record for Instagram, TikTok or YouTube.
 - **Plays video, too.** 22 effects, from neon edges to kaleidoscopes and reaction
   diffusion, moved by your hands or by the music. Full screen on a projector, or recorded
   with Live's sound in the format your platform wants.
-- **Feels immediate.** Hand tracking runs inside Live on Apple's Vision framework, a few
-  milliseconds per frame on Apple silicon. No extra app, no virtual MIDI ports.
+- **Feels immediate.** Hand tracking runs inside Live, on Apple's Vision framework on a Mac
+  and on Google's MediaPipe hand models on Windows: a few milliseconds per frame. No extra
+  app, no virtual MIDI ports.
 - **Live-native.** Every setting is a Live parameter: saved with your Set, automatable,
   MIDI-mappable. Use it on as many tracks as you like.
 - **Private.** Everything runs on your Mac; the camera picture never leaves it.
@@ -56,6 +58,20 @@ Prefer a download? Get `MidiHands-macOS.zip` from
 [Releases](https://github.com/HarzerHeribert/midihands_m4l/releases/latest), unzip it, open
 Terminal in that folder and run `./install.sh`. Read
 [why the script is needed](#why-an-install-script-and-not-a-double-click).
+
+### Windows (beta)
+
+MidiHands for Windows is in testing. You need Windows 10 or 11 (64-bit), Ableton Live 12
+with Max for Live, and a camera. Quit Live, open PowerShell and run:
+
+```powershell
+irm https://github.com/HarzerHeribert/midihands_m4l/releases/download/v0.3.0-beta.1/install.ps1 | iex
+```
+
+Everything works as on the Mac except recording the video window, which comes later. The
+device and your Sets are the same on both systems. Found a problem? Please
+[open an issue](https://github.com/HarzerHeribert/midihands_m4l/issues) and say it is
+Windows.
 
 ## Quick start
 
@@ -193,7 +209,11 @@ again at any time. See [CHANGELOG.md](CHANGELOG.md) for what changed.
 location Live uses.
 
 **"Camera access denied".** Open System Settings > Privacy & Security > Camera and allow
-Ableton Live, then switch the camera off and on in the device.
+Ableton Live, then switch the camera off and on in the device. On Windows: Settings >
+Privacy & security > Camera > "Let desktop apps access your camera".
+
+**Windows: no camera at all, or MidiHands does not load.** Windows "N" editions lack Media
+Foundation: install the Media Feature Pack from Microsoft.
 
 **macOS says `mh.hands` cannot be opened, or the device shows no camera list.** The files
 were probably copied from a browser download by hand. Run the install script, which installs
@@ -231,7 +251,8 @@ and download from GitHub.
 
 ## Uninstall
 
-Run `./uninstall.sh` from the release folder, or delete `~/Documents/Max 9/Packages/midihands`,
+Run `./uninstall.sh` from the release folder (on Windows: right-click `uninstall.ps1` > Run
+with PowerShell), or delete `~/Documents/Max 9/Packages/midihands`,
 `MidiHands.amxd` in your User Library under Presets > MIDI Effects > Max MIDI Effect, and
 `MidiHands Audio.amxd` under Presets > Audio Effects > Max Audio Effect.
 

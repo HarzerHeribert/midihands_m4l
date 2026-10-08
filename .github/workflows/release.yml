@@ -23,23 +23,29 @@ jobs:
       - name: Tag matches VERSION
         if: github.ref_type == 'tag'
         run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
-      - name: Build release zip
+      - name: Windows toolchain and ONNX Runtime
+        run: brew install mingw-w64 && scripts/fetch-onnxruntime.sh
+      - name: Build release zips (macOS, and Windows cross-compiled)
         run: make dist
       - name: Release notes from CHANGELOG.md
         run: |
           v="$(cat VERSION)"
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > dist/notes.md
-          printf '\n### Install\n\n```\ncurl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash\n```\n\nNeeds macOS 14+ and Ableton Live 12 with Max for Live. Details in INSTALL.txt inside the zip.\n' "$GITHUB_REPOSITORY" >> dist/notes.md
+          if [[ "$v" == *-* ]]; then base="https://github.com/$GITHUB_REPOSITORY/releases/download/v$v"; else base="https://github.com/$GITHUB_REPOSITORY/releases/latest/download"; fi
+          printf '\n### Install\n\n**macOS** (14+), in Terminal:\n\n```\ncurl -fsSL %s/install.sh | bash\n```\n\n**Windows** (10/11, 64-bit), in PowerShell:\n\n```\nirm %s/install.ps1 | iex\n```\n\nNeeds Ableton Live 12 with Max for Live. Details in INSTALL.txt inside the zips.\n' "$base" "$base" >> dist/notes.md
       - name: Publish
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/MidiHands-macOS.zip dist/install.sh dist/SHA256SUMS \
-            --title "MidiHands $(cat VERSION)" --notes-file dist/notes.md --verify-tag
+          # A version with a suffix (0.3.0-beta.1) is a pre-release: releases/latest, the
+          # install commands and the Update button keep pointing at the last real release.
+          pre=""; [[ "$(cat VERSION)" == *-* ]] && pre="--prerelease"
+          gh release create "$GITHUB_REF_NAME" dist/MidiHands-macOS.zip dist/install.sh dist/MidiHands-Windows.zip \
+            dist/install.ps1 dist/SHA256SUMS --title "MidiHands $(cat VERSION)" --notes-file dist/notes.md --verify-tag $pre
       - name: Keep the build (dry run)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
-          name: MidiHands-macOS
+          name: MidiHands
           path: dist/
