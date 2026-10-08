@@ -65,7 +65,7 @@ MidiHands for Windows is in testing. You need Windows 10 or 11 (64-bit), Ableton
 with Max for Live, and a camera. Quit Live, open PowerShell and run:
 
 ```powershell
-irm https://github.com/HarzerHeribert/midihands_m4l/releases/download/v0.3.0-beta.1/install.ps1 | iex
+irm https://github.com/HarzerHeribert/midihands_m4l/releases/download/v0.3.0-beta.2/install.ps1 | iex
 ```
 
 Everything works as on the Mac except recording the video window, which comes later. The
