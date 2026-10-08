@@ -671,25 +671,35 @@ void main() {
   const SLOTS = 4;
 
   // The chain from Live parameter values (P, as the device stores them) and the
-  // modulation sources: x<s>fx is 1 + the effect's index (0 = none), x<s>mix and
-  // x<s>p<k> are 0..1, and every control j (0 = mix, 1..6 = knobs) can be moved
-  // by a source x<s>m<j>s (0 = none) times x<s>m<j>a (-1..1). Sources (`values`):
-  // 1..10 the hand movements, then MidiHands Audio letters A..H x level, bass,
-  // mid, high, beat (11..50), as the generator's MOD_SOURCES.
-  function modulated(P, expr, s, j, base) {
+  // modulation sources: x<s>fx is 1 + the effect's index (0 = none), x<s>on
+  // switches the slot, x<s>mix and x<s>p<k> are 0..1, and every control j
+  // (0 = mix, 1..6 = knobs) can be moved by a source x<s>m<j>s (0 = none) times
+  // x<s>m<j>a (-1..1). Sources: 1..10 the hand movements, then MidiHands Audio
+  // letters A..H x level, bass, mid, high, beat (11..50), as the generator's
+  // MOD_SOURCES. `m` holds them: { expr: 10 movements, held: 8 x 10 movements
+  // that only follow the hand while a clutch gesture is held (mh.hands), audio: 40 }.
+  // A slot engaged by a gesture (x<s>eng, 0 = always) takes its hand movements
+  // from that gesture's held set, so they stay put while the gesture is let go.
+  function values(P, s, m) {
+    const eng = P[`x${s}eng`] | 0, held = m.held || [];
+    const hands = eng && held.length >= eng * HAND_SOURCES ? held.slice((eng - 1) * HAND_SOURCES, eng * HAND_SOURCES) : m.expr || [];
+    return hands.concat(m.audio || []);
+  }
+  function modulated(P, v, s, j, base) {
     const src = P[`x${s}m${j}s`] | 0;
     if (!src) return base;
-    return Math.max(0, Math.min(1, base + (P[`x${s}m${j}a`] || 0) * (expr[src - 1] || 0)));
+    return Math.max(0, Math.min(1, base + (P[`x${s}m${j}a`] || 0) * (v[src - 1] || 0)));
   }
-  function slots(P, expr) {
+  function slots(P, m) {
     const out = [];
     for (let s = 0; s < SLOTS; s++) {
       const fx = list[(P[`x${s}fx`] | 0) - 1];
-      if (!fx) continue;
+      if (!fx || P[`x${s}on`] === 0) continue;
+      const v = values(P, s, m);
       out.push({
         id: fx.id, slot: s,
-        mix: modulated(P, expr, s, 0, P[`x${s}mix`] ?? 1),
-        p: [0, 1, 2, 3, 4, 5].map((k) => modulated(P, expr, s, k + 1, P[`x${s}p${k}`] ?? 0.5)),
+        mix: modulated(P, v, s, 0, P[`x${s}mix`] ?? 1),
+        p: [0, 1, 2, 3, 4, 5].map((k) => modulated(P, v, s, k + 1, P[`x${s}p${k}`] ?? 0.5)),
       });
     }
     return out;
@@ -698,7 +708,7 @@ void main() {
   function sources(P) {
     const used = new Set();
     for (let s = 0; s < SLOTS; s++) {
-      if (!(P[`x${s}fx`] | 0)) continue;
+      if (!(P[`x${s}fx`] | 0) || P[`x${s}on`] === 0) continue;
       for (let j = 0; j < 7; j++) { const src = P[`x${s}m${j}s`] | 0; if (src && src <= HAND_SOURCES) used.add(src - 1); }
     }
     return used;
@@ -707,5 +717,5 @@ void main() {
   // Modulation source index for letter c (0..7) and feature f (0..4).
   const audioSource = (c, f) => HAND_SOURCES + 1 + c * AUDIO_FEATURES.length + f;
   const FORMATS = [16 / 9, 9 / 16, 1, 4 / 5];
-  window.MHFX = { list, byId, GROUPS, SLOTS, FORMATS, slots, sources, modulated, HAND_SOURCES, AUDIO_LETTERS, AUDIO_FEATURES, audioSource };
+  window.MHFX = { list, byId, GROUPS, SLOTS, FORMATS, slots, sources, values, modulated, HAND_SOURCES, AUDIO_LETTERS, AUDIO_FEATURES, audioSource };
 })();

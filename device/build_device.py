@@ -17,7 +17,8 @@ replaces the "---" prefix with an id unique to each device instance:
   ---mh_in       settings and commands -> mh.hands
   ---mh_boot     device finished loading (resend stored settings)
   ---mh_open     the editor window was opened
-  ---mh_expr     ten hand-movement values, every frame
+  ---mh_expr     ten hand-movement values, clutch gestures and held movements, every frame
+  ---mh_link     what each link's live.remote~ does (mh.hands decides, core/links)
   ---mh_view     hand drawing data, every frame
   ---mh_info     status, stats, error, picture url, finger layout
   ---mh_page     strip parameters shown in the editor page ("param notes 1")
@@ -45,6 +46,10 @@ SCALES = ["Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Locri
           "Blues", "Chromatic"]  # order = max/mh.hands.mm scaleTypes()
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LINKS = 16  # movement -> Live parameter links; any number may share a movement
+# What engages a link or an effect slot (order = core/clutch.hpp clutchFor; Sets store the index).
+GESTURES = ["Thumb Out", "Thumb In", "Fist", "Pinky"]
+ENGAGE = ["Always"] + [f"{side} {g}" for side in "LR" for g in GESTURES]
+TAKEOVER = ["Jump", "Grab", "Pickup"]  # order = core/links.hpp Takeover
 FX_SLOTS = 4  # video effect chain length; each slot: effect, mix, six knobs, a modulation per control
 VIDEO_SIZE = (960.0, 540.0)
 FORMATS = ["16:9", "9:16", "1:1", "4:5"]
@@ -66,7 +71,7 @@ VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip
 # (inlets, outlets, outlet types) for object classes used below.
 PORTS = {
     "midiin": (1, 1, ["int"]), "midiout": (1, 0, []), "iter": (1, 1, [""]),
-    "mh.hands": (1, 4, ["list", "list", "", ""]),
+    "mh.hands": (1, 5, ["list", "list", "", "", ""]),
     "live.thisdevice": (1, 3, ["bang", "int", "int"]),
     "prepend": (1, 1, [""]), "pak": (2, 1, [""]), "gate": (2, 1, [""]),
     "==": (2, 1, ["int"]), "/": (2, 1, ["float"]), "+": (2, 1, ["int"]),
@@ -265,6 +270,18 @@ def stored_params() -> list[tuple]:
                 (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, len(MOD_SOURCES) - 1, 0, 1, MOD_SOURCES),
                 (f"x{s}m{j}a", f"FX{n} {what} Mod Amount", "float", -1, 1, 0.5, 1, None),
             ]
+    # Added in 0.4.0, at the end so the parameters of older Sets keep their places.
+    for k in range(LINKS):
+        params += [
+            (f"m{k}eng", f"Link {k + 1} Engage", "enum", 0, len(ENGAGE) - 1, 0, 1, ENGAGE),
+            (f"m{k}take", f"Link {k + 1} Takeover", "enum", 0, len(TAKEOVER) - 1, 0, 1, TAKEOVER),
+            (f"m{k}ret", f"Link {k + 1} Return", "enum", 0, 1, 0, 1, ["off", "on"]),
+        ]
+    for s in range(FX_SLOTS):
+        params += [
+            (f"x{s}on", f"FX{s + 1} On", "enum", 0, 1, 1, 0, ["off", "on"]),
+            (f"x{s}eng", f"FX{s + 1} Engage", "enum", 0, len(ENGAGE) - 1, 0, 1, ENGAGE),
+        ]
     return params
 
 
@@ -411,6 +428,15 @@ def build_editor() -> tuple[Patch, dict]:
             prep = e.obj(f"prepend {msg} {k}", x, y + 60)
             e.connect(box, 0, prep)
             e.connect(prep, 0, to_hands)
+        elif m := re.fullmatch(r"m(\d+)(\w+)", key):
+            prep = e.obj(f"prepend linkset {m[1]} {m[2]}", x, y + 60)
+            e.connect(box, 0, prep)
+            e.connect(prep, 0, to_hands)
+
+    # Links follow the Movement switch.
+    movement = e.obj("prepend movement", 800, 200)
+    e.connect(move_in, 0, movement)
+    e.connect(movement, 0, to_hands)
 
     # CC out only while Movement is on.
     cc_pak = e.obj("pak 0 0", 1700, 420)
@@ -486,11 +512,14 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(refresh, 1, numbox["scale"])
     e.connect(refresh, 0, numbox["root"])
 
-    # Links: movement -> range/curve -> Live parameter. mh-links.js names the
-    # targets and knows the parameter selected in Live, so "link <k>" links to
-    # it at once; with nothing selected the link listens for a click instead
-    # (live.map). Each target id is kept by a live.object with Live's
-    # persistence, so links come back with the Set.
+    # Links: mh.hands (core/links) decides what each link does: engage on a
+    # clutch gesture, take over without a jump, let go. The patch carries it
+    # out with a line~ and a live.remote~ per link. mh-links.js names the
+    # targets, reads a parameter's value when a link asks, and knows the
+    # parameter selected in Live, so "link <k>" links to it at once; with
+    # nothing selected the link listens for a click instead (live.map). Each
+    # target id is kept by a live.object with Live's persistence, so links
+    # come back with the Set.
     links_js = e.obj("v8 mh-links.js", 1000, 2040)
     link_cmd = e.obj("prepend link", 1000, 2010)
     e.connect(commands, 1, link_cmd)
@@ -498,17 +527,31 @@ def build_editor() -> tuple[Patch, dict]:
     links_report = e.msg("report", 1100, 2010)
     e.connect(hello_steps, 0, links_report)
     e.connect(links_report, 0, links_js)
-    # Device ready: start the helper, read back stored targets, then let
-    # links attach (live.remote~ must not be touched before Live's API is up).
+    # Device ready: start the helper, read back stored targets (each tells
+    # mh.hands), then let links attach (live.remote~ must not be touched
+    # before Live's API is up).
     links_boot = e.obj("t b b b", 1200, 1980)
     e.connect(e.obj("r ---mh_boot", 1200, 1950), 0, links_boot)
     links_init = e.msg("init", 1260, 2010)
     e.connect(links_boot, 2, links_init)
     e.connect(links_init, 0, links_js)
-    js_out = e.obj("route setid listen", 1000, 2070)
+    links_ready = e.msg("linksready", 1340, 2010)
+    e.connect(links_boot, 0, links_ready)
+    e.connect(links_ready, 0, to_hands)
+    js_out = e.obj("route setid listen value", 1000, 2070)
     e.connect(links_js, 0, js_out)
-    e.connect(js_out, 2, ui)  # mapname <k> <text>, selected <text>
+    e.connect(js_out, 3, ui)  # mapname <k> <text>, selected <text>
+    answer = e.obj("prepend linkvalue", 1500, 2100)
+    e.connect(js_out, 2, answer)
+    e.connect(answer, 0, to_hands)
+    from_hands = e.obj("route link read", 1600, 2040)
+    e.connect(e.obj("r ---mh_link", 1600, 2010), 0, from_hands)
+    read = e.obj("prepend read", 1700, 2070)
+    e.connect(from_hands, 1, read)
+    e.connect(read, 0, links_js)
     slot_names = " ".join(str(k) for k in range(LINKS))
+    link_route = e.obj("route " + slot_names, 1600, 2100)
+    e.connect(from_hands, 0, link_route)
     setid_route = e.obj("route " + slot_names, 1000, 2100)
     e.connect(js_out, 0, setid_route)
     listen_route = e.obj("route " + slot_names, 1300, 2100)
@@ -517,27 +560,21 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(commands, 2, unlink_route)
     for k in range(LINKS):
         bx, by = 20 + 240 * (k % 8), 2200 + 640 * (k // 8)
-        # movement value -> shaped 0..1 -> parameter
-        index = e.obj("+ 1", bx, by)
-        e.connect(numbox[f"m{k}src"], 0, index)
-        pick_expr = e.obj("zl nth 1", bx, by + 30)
-        e.connect(index, 0, pick_expr, 1)
-        e.connect(expr_in, 0, pick_expr)
-        shape = e._add({
-            "maxclass": "newobj",
-            "text": "expr $f5 + ($f6 - $f5) * pow(min(max(($f1 - $f2) / max($f3 - $f2\\, 0.001)\\, 0.)\\, 1.)\\, pow(2.\\, $f4 / 50.))",
-            "numinlets": 6, "numoutlets": 1, "outlettype": [""],
-            "patching_rect": [bx, by + 60, 220, 20],
-        })
-        e.connect(pick_expr, 0, shape)
-        for inlet, key in enumerate(("lo", "hi", "curve", "min", "max"), start=1):
-            e.connect(numbox[f"m{k}{key}"], 0, shape, inlet)
-        ramp = e.msg("$1 20", bx, by + 90)
-        e.connect(shape, 0, ramp)
+        # value <v> <ms> -> line~ -> live.remote~; attach / detach its target
+        acts = e.obj("route value attach detach", bx, by)
+        e.connect(link_route, k, acts)
+        glide = e.msg("$1 $2", bx, by + 60)
+        e.connect(acts, 0, glide)
         line = e.obj("line~", bx, by + 120)
-        e.connect(ramp, 0, line)
+        e.connect(glide, 0, line)
         remote = e.obj("live.remote~ @normalized 1", bx, by + 150)
         e.connect(line, 0, remote, 0)
+        target_id = e.obj("zl reg", bx, by + 420)
+        e.connect(acts, 1, target_id)
+        e.connect(target_id, 0, remote, 1)
+        detach = e.msg("id 0", bx + 80, by + 450)
+        e.connect(acts, 2, detach)
+        e.connect(detach, 0, remote, 1)
 
         # target: "id N" -> persistent live.object -> getid -> everyone
         set_target = e.obj("t b l", bx + 120, by + 180)
@@ -550,11 +587,15 @@ def build_editor() -> tuple[Patch, dict]:
         e.connect(set_target, 0, getid)
         e.connect(links_boot, 1, getid)
         e.connect(getid, 0, target)
-        got = e.obj("t l l", bx + 120, by + 270)
+        got = e.obj("t l l l", bx + 120, by + 270)
         e.connect(target, 0, got)
         name_req = e.obj(f"prepend label {k}", bx + 120, by + 300)
-        e.connect(got, 0, name_req)
+        e.connect(got, 1, name_req)
         e.connect(name_req, 0, links_js)
+        e.connect(got, 2, target_id, 1)
+        tell = e.obj(f"prepend linktarget {k}", bx + 120, by + 330)
+        e.connect(got, 0, tell)
+        e.connect(tell, 0, to_hands)
 
         # click-to-link when nothing is selected in Live
         lmap = e._add({"maxclass": "newobj", "text": "live.map @strict 1", "numinlets": 1, "numoutlets": 5,
@@ -580,39 +621,6 @@ def build_editor() -> tuple[Patch, dict]:
         clear = e.msg("id 0", bx + 140, by + 390)
         e.connect(unlink, 0, clear)
         e.connect(clear, 0, set_target)
-
-        # A link drives its parameter only while Movement and the link are on.
-        # Off detaches live.remote~ (id 0), so the parameter can be turned by
-        # hand and its automation plays; on re-attaches the stored target.
-        target_id = e.obj("zl reg", bx, by + 420)
-        e.connect(got, 1, target_id)
-        attach = e.obj("gate 1 0", bx, by + 450)
-        e.connect(target_id, 0, attach, 1)
-        e.connect(attach, 0, remote, 1)
-        on_pak = e.obj("pak 0 0", bx, by + 480)
-        e.connect(move_in, 0, on_pak, 0)
-        e.connect(numbox[f"m{k}on"], 0, on_pak, 1)
-        on_both = e.obj("expr $i1 && $i2", bx, by + 510)
-        e.connect(on_pak, 0, on_both)
-        ready_gate = e.obj("gate 1 0", bx + 120, by + 510)
-        e.connect(on_both, 0, ready_gate, 1)
-        ready = e.obj("t b b", bx + 120, by + 480)
-        e.connect(links_boot, 0, ready)
-        open_ready = e.msg("1", bx + 160, by + 450)
-        e.connect(ready, 1, open_ready)
-        e.connect(open_ready, 0, ready_gate, 0)
-        e.connect(ready, 0, on_pak)  # pak resends its pair on bang
-        on_change = e.obj("change -1", bx, by + 540)
-        e.connect(ready_gate, 0, on_change)
-        on_steps = e.obj("t i i", bx, by + 570)
-        e.connect(on_change, 0, on_steps)
-        e.connect(on_steps, 1, attach, 0)
-        on_pick = e.obj("sel 1 0", bx, by + 600)
-        e.connect(on_steps, 0, on_pick)
-        e.connect(on_pick, 0, target_id)
-        detach = e.msg("id 0", bx + 80, by + 630)
-        e.connect(on_pick, 1, detach)
-        e.connect(detach, 0, remote, 1)
 
     window = [80.0, 80.0, W, H]  # x, y, width, height
     return e, e.patcher(window, toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,
@@ -714,6 +722,7 @@ def build() -> dict:
 
     expr_out = p.obj("s ---mh_expr", 100, 460)
     p.connect(hands, 1, expr_out)
+    p.connect(hands, 4, p.obj("s ---mh_link", 200, 490))
     view_out = p.obj("s ---mh_view", 300, 460)
     p.connect(hands, 2, view_out)
 

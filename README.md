@@ -24,7 +24,8 @@ own visualizer, ready to record for Instagram, TikTok or YouTube.
 - **Plays in key.** Eight fingers, eight pads: single notes, chords, or a split with chords
   in one hand and melody in the other. Follows the key and scale of your Live Set.
 - **Moves anything.** Link hand height, sideways position, pinch, fist or tilt to any
-  parameter in Live. One movement can drive many parameters, each with its own range and curve.
+  parameter in Live. One movement can drive many parameters, each with its own range and curve,
+  always or only while you hold a gesture, like a clutch.
 - **Plays video, too.** 22 effects, from neon edges to kaleidoscopes and reaction
   diffusion, moved by your hands or by the music. In its own window on a projector, or recorded
   with Live's sound in the format your platform wants.
@@ -123,6 +124,33 @@ curve, **Inv** to reverse the direction, an output range, and **✕** to remove 
 movement can drive several parameters at once, up to 16 links per device. Links are saved
 with your Set.
 
+### Engage with a gesture
+
+Under each link, **Engage** chooses when the hand moves the parameter: *Always*, or only
+while you hold a gesture, like a clutch. Hold it, move, let go: the parameter stays where
+you left it, and its automation (if any) plays again.
+
+- **Thumb out**: stick the thumb out to the side, away from the hand.
+- **Thumb in**: tuck the thumb in against the hand or across the palm.
+- **Fist**: close the hand.
+- **Pinky up**: the pinky straight while the other fingers are curled.
+
+Each gesture works on either hand, and thumbs never play notes, so a thumb is a good clutch
+on a track that also plays. The gesture buttons next to *Left hand* and *Right hand* light up
+while you make them. A gesture changes some movements of its own hand (a fist changes the
+pinch and the fist), so the link warns you: use the other hand for those.
+
+**Takeover** decides what happens when a link engages and your hand is somewhere else than
+the parameter:
+
+- *Jump*: the parameter goes straight to your hand's value.
+- *Grab*: the parameter stays and moves by however far your hand moves, like grabbing a knob.
+  Let go, move your hand back, grab again and keep going. Picking a gesture selects Grab.
+- *Pickup*: the parameter waits until your hand passes its value, then follows.
+
+**Return** puts the parameter back where it was when the link engaged, as soon as you let go:
+grab, sweep the filter, let go, and it is back.
+
 ## FX: a visualizer you play
 
 <p align="center"><img src="docs/images/effects.png" alt="Eight of the video effects: neon edges, kaleidoscope, halftone, thermal, tunnel, ASCII, glitch and reaction diffusion, each over hands drawn as glossy jelly shapes" width="100%"></p>
@@ -139,6 +167,11 @@ The **FX** page turns the camera picture and your hands into a music video.
 3. Choose how hands are drawn: **Jelly** (the glossy look of the original midihands app),
    **Lines** or **Off**, in Live's cyan and orange or in **Amber**. **Cues** draw what each
    movement is doing right on your hands: the pinch distance, the height, the fist.
+
+Each slot has an **On** switch (automatable: switch effects on and off in your
+arrangement) and an **Engage** menu: its hand modulation can work always, or only while you
+hold a gesture (see [Engage with a gesture](#engage-with-a-gesture)); let go and the knobs stay
+where they are.
 
 Effects marked *Follow Hands* move their center to your hands. **Camera** sets how much of
 the camera picture shows: at 0 only the hands and effects remain, on black. Every FX

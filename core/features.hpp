@@ -19,6 +19,9 @@ struct HandFeatures {
   float pinch = 0.f;   // thumb-index closeness, 1 = touching
   float fist = 0.f;    // 1 = closed fist
   float tilt = 0.f;    // hand rotation, 0.5 = level
+  // Thumb tip's distance from the index and middle finger, in palm lengths:
+  // ~0.1 tucked in, ~0.6 relaxed, over 1 stuck out (see HandClutches).
+  float thumbSpan = 0.f;
 };
 
 float fingerCurl(Point mcp, Point pip, Point tip, float aspect);

@@ -8,6 +8,7 @@
 //   r.setSource(img);                       // <img crossOrigin="anonymous"> (MJPEG) or null
 //   r.setHands([left, right]);              // each null or {pts: 21 x [x, y], on: [_, i, m, r, p]}
 //   r.setExpr(tenValues);                   // 0..1, order of EXPR in the editor
+//   r.setGestures(eightValues);             // clutch gestures held: L thumb out, in, fist, pinky, then R
 //   r.setFx([{id, mix, p: [6 x 0..1]}]);    // effective values (after modulation)
 //   Object.assign(r.options, {...});        // see DEFAULTS
 //   r.render(seconds);
@@ -28,6 +29,7 @@
     look: "jelly",        // "jelly" | "lines" | "off"
     theme: "live",
     cues: [],             // expression indices to show gesture cues for (0..9)
+    clutches: [],         // clutch gestures in use (engage options 1..8), shown where they are made
     camera: 1,            // camera picture level 0..1 (0 = black, hands only)
     grade: "none",        // "play": desaturated and dimmed, for the editor's Play view
     fxOnHands: true,      // effects also apply to the drawn hands
@@ -346,7 +348,7 @@ void main() {
 
     const camTex = texture(gl, 2, 2);
     let source = null, sourceOk = false;
-    let hands = [null, null], expr = new Array(10).fill(0), fx = [];
+    let hands = [null, null], expr = new Array(10).fill(0), gestures = new Array(8).fill(0), fx = [];
     const targets = {};      // name -> {tex, fb, w, h}
     const state = {};        // per-effect-slot memory (feedback buffers etc.)
     let lastTime = 0, contentCss = { x: 0, y: 0, w: 1, h: 1 }, crop = { x: 0, y: 0, w: 1, h: 1 };
@@ -481,6 +483,13 @@ void main() {
           gauge(dst, w, h, palmC, (46 + ring * 14) * unit, clamp01(expr[s * 5 + k]), k === 3 ? accent : color, hex(theme.track), hi, 0.16);
           ring++;
         }
+        // Clutch gestures in use: a dot where the gesture is made (thumb tip, palm,
+        // pinky tip), small and dim while let go, large in the play color while held.
+        for (let g = 0; g < 4; g++) {
+          if (!(r.options.clutches || []).includes(1 + s * 4 + g)) continue;
+          const held = gestures[s * 4 + g] > 0.5, at = g < 2 ? pts[4] : g === 2 ? palmC : pts[20];
+          dot(dst, w, h, at, (held ? 11 : 6) * unit, held ? hex(theme.play) : hex(theme.track), held ? 0.95 : 0.9, hi);
+        }
       }
       gl.disable(gl.BLEND);
     }
@@ -590,6 +599,7 @@ void main() {
     r.setSource = (img) => { source = img; sourceOk = false; };
     r.setHands = (h) => { hands = h; };
     r.setExpr = (e) => { expr = e; };
+    r.setGestures = (g) => { gestures = g || []; };
     r.setFx = (slots) => { fx = slots || []; };
     r.toCss = (p) => [contentCss.x + (p[0] - crop.x) / crop.w * contentCss.w, contentCss.y + (p[1] - crop.y) / crop.h * contentCss.h];
     r.content = () => Object.assign({}, contentCss);

@@ -23,20 +23,28 @@
 //     opened), and check GitHub for a newer release
 //   checkupdate, update: check for / install the latest release (mac/updater)
 //   record 1 <x> <y> <w> <h> | record 0, reveal: record the video window (mac/recorder)
+//   links (core/links): linkset <k> <on|src|lo|hi|curve|min|max|eng|take|ret> <value>,
+//     linktarget <k> <id> (the linked parameter, 0 = none), linkvalue <k> <0-1 | -1>
+//     (answer to "read"), movement 0/1 (the Movement switch), linksready (Live's API is up)
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
-//   1 expression values: 10 floats 0-1 (see kExprNames)
+//   1 expression values: 10 floats 0-1 (see kExprNames), then 8 clutch gestures 0/1
+//     (left thumb out, thumb in, fist, pinky, then right), then 8 x 10 held movements
+//     (core/links HeldMovements, one set per gesture in that order)
 //   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
 //   3 info: cameras, status, stats, error, picture <url>, assets <url> (Live's fonts),
 //      version <x.y.z>, update available|current|unknown|installing|installed|failed [text],
 //      recording 0|1, recorded <path>, recordfail <why>,
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
-//      scaleinfo <root> <intervals...>
+//      scaleinfo <root> <intervals...>, linkstate <16 x 0 idle | 1 moving | 2 waiting>
+//   4 links, for each link's live.remote~: link <k> value <0-1> <ramp ms>, link <k> attach,
+//      link <k> detach; read <k> (ask for the parameter's value)
 #include "ext.h"
 #include "ext_obex.h"
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -44,6 +52,7 @@
 #include <vector>
 
 #include "../core/engine.hpp"
+#include "../core/links.hpp"
 #include "../core/version.hpp"
 #include "../platform/camera_hub.hpp"
 #include "../platform/preview_server.hpp"
@@ -73,6 +82,12 @@ const std::vector<ScaleType>& scaleTypes() {
 }
 
 constexpr int kViewFloats = 1 + mh::kSides * (1 + mh::kLandmarks * 2 + 4);
+constexpr int kExprFloats = mh::kExpr + mh::kClutches + mh::kClutches * mh::kExpr;
+
+// Links and their timeouts run on one clock, whatever the camera does.
+double nowSeconds() {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 // Everything shared between threads lives here, guarded by `mutex`.
 struct State {
@@ -82,7 +97,13 @@ struct State {
   std::vector<int> scaleSteps = {0, 2, 4, 5, 7, 9, 11};
   std::vector<mh::MidiEvent> pendingMidi;
   std::array<float, mh::kExpr> expr{};
+  mh::Gestures gestures{};
+  mh::HeldMovements held;
   bool exprFresh = false;
+  mh::Links links;
+  std::vector<mh::LinkEvent> pendingLinks;
+  std::array<int, mh::Links::kLinks> linkStates{};
+  bool linkStatesFresh = false;
   mh::Output view;
   mh::TrackerStats stats;
   // Main thread only: what was last reported, to skip unchanged layouts.
@@ -104,7 +125,10 @@ typedef struct _mh_hands {
   void* outExpr;
   void* outView;
   void* outInfo;
+  void* outLinks;
   t_clock* flushClock;
+  t_clock* linkClock;  // wakes the links for read timeouts and Return
+  t_qelem* linkStateQelem;
   t_qelem* viewQelem;
   t_qelem* layoutQelem;
   t_qelem* accessQelem;
@@ -133,17 +157,44 @@ static void mh_error(t_mh_hands* x, const std::string& text) {
   object_error(reinterpret_cast<t_object*>(x), "%s", text.c_str());
 }
 
-// Scheduler thread: MIDI first, then expressions.
+// Under the lock: let the links act on what changed, and wake them again when
+// one of them waits for something (a read timeout, a Return settling).
+static void mh_linksUpdate(t_mh_hands* x) {
+  State* st = x->st;
+  const double now = nowSeconds();
+  st->links.update(now, st->pendingLinks);
+  for (int k = 0; k < mh::Links::kLinks; ++k) {
+    const int state = st->links.state(k);
+    if (state != st->linkStates[k]) {
+      st->linkStates[k] = state;
+      st->linkStatesFresh = true;
+    }
+  }
+  if (st->linkStatesFresh) qelem_set(x->linkStateQelem);
+  const double next = st->links.deadline();
+  if (next >= 0.0) clock_fdelay(x->linkClock, std::max(0.0, (next - now) * 1000.0) + 1.0);
+}
+
+// Scheduler thread: MIDI first, then expressions, then link actions.
 static void mh_flush(t_mh_hands* x) {
   std::vector<mh::MidiEvent> midi;
-  std::array<float, mh::kExpr> expr{};
+  std::vector<mh::LinkEvent> links;
+  t_atom values[kExprFloats];
   bool fresh = false;
   {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     midi.swap(x->st->pendingMidi);
-    expr = x->st->expr;
+    links.swap(x->st->pendingLinks);
     fresh = x->st->exprFresh;
     x->st->exprFresh = false;
+    if (fresh) {
+      int n = 0;
+      for (float v : x->st->expr) atom_setfloat(values + n++, v);
+      for (const auto& side : x->st->gestures)
+        for (bool g : side) atom_setfloat(values + n++, g ? 1.0 : 0.0);
+      for (int c = 1; c <= mh::kClutches; ++c)
+        for (int i = 0; i < mh::kExpr; ++i) atom_setfloat(values + n++, x->st->held.value(c, i));
+    }
   }
   for (const mh::MidiEvent& e : midi) {
     t_atom a[3];
@@ -152,11 +203,41 @@ static void mh_flush(t_mh_hands* x) {
     atom_setlong(a + 2, e.data2);
     outlet_list(x->outMidi, nullptr, 3, a);
   }
-  if (fresh) {
-    t_atom a[mh::kExpr];
-    for (int i = 0; i < mh::kExpr; ++i) atom_setfloat(a + i, expr[i]);
-    outlet_list(x->outExpr, nullptr, mh::kExpr, a);
+  if (fresh) outlet_list(x->outExpr, nullptr, kExprFloats, values);
+  for (const mh::LinkEvent& e : links) {
+    t_atom a[4];
+    atom_setlong(a, e.link);
+    if (e.kind == mh::LinkEvent::Read) {
+      outlet_anything(x->outLinks, gensym("read"), 1, a);
+      continue;
+    }
+    static const char* kinds[] = {"value", "attach", "detach"};
+    atom_setsym(a + 1, gensym(kinds[e.kind]));
+    atom_setfloat(a + 2, e.value);
+    atom_setfloat(a + 3, e.rampMs);
+    outlet_anything(x->outLinks, gensym("link"), e.kind == mh::LinkEvent::Value ? 4 : 2, a);
   }
+}
+
+// Scheduler thread: a link waited long enough.
+static void mh_linkTick(t_mh_hands* x) {
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    mh_linksUpdate(x);
+  }
+  mh_flush(x);
+}
+
+// Main thread: what each link is doing, for the editor.
+static void mh_linkStateOut(t_mh_hands* x) {
+  t_atom a[mh::Links::kLinks];
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    if (!x->st->linkStatesFresh) return;
+    x->st->linkStatesFresh = false;
+    for (int k = 0; k < mh::Links::kLinks; ++k) atom_setlong(a + k, x->st->linkStates[k]);
+  }
+  mh_info(x, "linkstate", mh::Links::kLinks, a);
 }
 
 // Main thread: hand drawing data and timing stats, coalesced by the qelem.
@@ -268,6 +349,10 @@ static void mh_stop(t_mh_hands* x) {
     std::lock_guard<std::mutex> lock(x->st->mutex);
     x->st->engine.panic(x->st->pendingMidi);
     x->st->view = mh::Output{};
+    // No camera, no clutch gestures: clutched links let go; the rest keep their value.
+    x->st->gestures = mh::Gestures{};
+    x->st->links.setInput(x->st->expr, x->st->gestures);
+    mh_linksUpdate(x);
   }
   clock_fdelay(x->flushClock, 0.0);
   qelem_set(x->viewQelem);
@@ -408,6 +493,11 @@ static void mh_report(t_mh_hands* x) {
   }
   mh_status(x);
   mh_layoutOut(x, true);
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    x->st->linkStatesFresh = true;  // the page that asked shows the links' states
+  }
+  mh_linkStateOut(x);
   mh_checkupdate(x);
 }
 
@@ -449,12 +539,16 @@ static void mh_start(t_mh_hands* x) {
   mh::CameraInfo info;
   x->subscription = mh::CameraHub::shared().subscribe(
       camera,
-      [st, flush, view](const mh::HubFrame& hf) {
+      [x, st, flush, view](const mh::HubFrame& hf) {
         {
           std::lock_guard<std::mutex> lock(st->mutex);
           mh::Output out = st->engine.process(hf.frame);
           st->pendingMidi.insert(st->pendingMidi.end(), out.midi.begin(), out.midi.end());
           st->expr = out.expr;
+          st->gestures = out.gestures;
+          st->held.apply(out.expr, out.gestures);
+          st->links.setInput(out.expr, out.gestures);
+          mh_linksUpdate(x);
           st->exprFresh = true;
           st->stats = hf.stats;
           out.midi.clear();
@@ -518,6 +612,67 @@ static void mh_fingerField(t_mh_hands* x, t_symbol* s, long argc, t_atom* argv) 
   });
 }
 
+// Link settings and answers from the patch; the links act on them at once.
+template <typename Edit>
+static void mh_linkEdit(t_mh_hands* x, Edit edit) {
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    edit(x->st->links);
+    mh_linksUpdate(x);
+  }
+  clock_fdelay(x->flushClock, 0.0);
+}
+
+// linkset <k> <key> <value>
+static void mh_linkset(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  if (argc < 3 || atom_gettype(argv + 1) != A_SYM) return;
+  const int k = static_cast<int>(atom_getlong(argv));
+  if (k < 0 || k >= mh::Links::kLinks) return;
+  const std::string key = atom_getsym(argv + 1)->s_name;
+  const float v = static_cast<float>(atom_getfloat(argv + 2));
+  const int i = static_cast<int>(atom_getlong(argv + 2));
+  mh_linkEdit(x, [&](mh::Links& links) {
+    mh::LinkParams p = links.params(k);
+    if (key == "on") p.on = i != 0;
+    else if (key == "src") p.source = std::clamp(i, 0, mh::kExpr - 1);
+    else if (key == "lo") p.lo = v;
+    else if (key == "hi") p.hi = v;
+    else if (key == "curve") p.curve = std::clamp(v, -100.f, 100.f);
+    else if (key == "min") p.min = v;
+    else if (key == "max") p.max = v;
+    else if (key == "eng") p.engage = std::clamp(i, 0, mh::kClutches);
+    else if (key == "take") p.takeover = std::clamp(i, 0, 2);
+    else if (key == "ret") p.ret = i != 0;
+    else return;
+    links.setParams(k, p);
+  });
+}
+
+// linktarget <k> <id>: the parameter link k moves (0 = none)
+static void mh_linktarget(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  if (argc < 2) return;
+  const int k = static_cast<int>(atom_getlong(argv));
+  const long id = atom_getlong(argv + argc - 1);  // "<k> <id>" or "<k> id <id>"
+  if (k < 0 || k >= mh::Links::kLinks) return;
+  mh_linkEdit(x, [&](mh::Links& links) { links.setTarget(k, id); });
+}
+
+// linkvalue <k> <value>: the parameter's normalized value, -1 if unknown
+static void mh_linkvalue(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  if (argc < 2) return;
+  const int k = static_cast<int>(atom_getlong(argv));
+  const float v = static_cast<float>(atom_getfloat(argv + 1));
+  mh_linkEdit(x, [&](mh::Links& links) { links.parameterValue(k, v); });
+}
+
+static void mh_movement(t_mh_hands* x, long on) {
+  mh_linkEdit(x, [&](mh::Links& links) { links.setMovement(on != 0); });
+}
+
+static void mh_linksready(t_mh_hands* x) {
+  mh_linkEdit(x, [&](mh::Links& links) { links.setReady(true); });
+}
+
 static void mh_scale(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
   std::vector<int> steps;
   for (long i = 0; i < argc; ++i) steps.push_back(static_cast<int>(atom_getlong(argv + i)));
@@ -565,19 +720,23 @@ static void mh_assist(t_mh_hands*, void*, long io, long index, char* text) {
     std::snprintf(text, 256, "open, close, cameras, panic, finger, settings");
     return;
   }
-  static const char* outlets[] = {"MIDI bytes (to midiout)", "Expressions: L height x pinch fist tilt, R ...",
-                                  "Hand view data", "Info: cameras, status, stats, error, picture, fingers"};
-  std::snprintf(text, 256, "%s", outlets[std::clamp<long>(index, 0, 3)]);
+  static const char* outlets[] = {"MIDI bytes (to midiout)", "Expressions: L height x pinch fist tilt, R ..., gestures, held",
+                                  "Hand view data", "Info: cameras, status, stats, error, picture, fingers",
+                                  "Links: link <k> value|attach|detach, read <k>"};
+  std::snprintf(text, 256, "%s", outlets[std::clamp<long>(index, 0, 4)]);
 }
 
 static void* mh_new(t_symbol*, long, t_atom*) {
   t_mh_hands* x = static_cast<t_mh_hands*>(object_alloc(mh_class));
   if (!x) return nullptr;
+  x->outLinks = outlet_new(x, nullptr);
   x->outInfo = outlet_new(x, nullptr);
   x->outView = outlet_new(x, nullptr);
   x->outExpr = listout(x);
   x->outMidi = listout(x);
   x->flushClock = clock_new(x, reinterpret_cast<method>(mh_flush));
+  x->linkClock = clock_new(x, reinterpret_cast<method>(mh_linkTick));
+  x->linkStateQelem = qelem_new(x, reinterpret_cast<method>(mh_linkStateOut));
   x->viewQelem = qelem_new(x, reinterpret_cast<method>(mh_view));
   x->layoutQelem = qelem_new(x, reinterpret_cast<method>(mh_layout));
   x->accessQelem = qelem_new(x, reinterpret_cast<method>(mh_start));
@@ -608,6 +767,8 @@ static void mh_free(t_mh_hands* x) {
   qelem_free(x->infoQelem);
   qelem_free(x->viewQelem);
   qelem_free(x->layoutQelem);
+  qelem_free(x->linkStateQelem);
+  object_free(x->linkClock);
   object_free(x->flushClock);
   // Notes still sounding are cut by Live when the device goes away.
   delete x->st;
@@ -629,6 +790,11 @@ void ext_main(void*) {
   class_addmethod(c, reinterpret_cast<method>(mh_record), "record", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_reveal), "reveal", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_scale), "scale", A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_linkset), "linkset", A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_linktarget), "linktarget", A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_linkvalue), "linkvalue", A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_movement), "movement", A_LONG, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_linksready), "linksready", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_anything), "anything", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_assist), "assist", A_CANT, 0);
   class_register(CLASS_BOX, c);

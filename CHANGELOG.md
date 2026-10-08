@@ -5,6 +5,21 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Added
+- Clutch gestures: a link can move its parameter always, or only while you hold a gesture:
+  thumb out, thumb in, a fist, or the pinky up on its own, of either hand. Let go and the
+  parameter stays where it is (automation, if any, takes over again). The Move page shows
+  which gestures each hand is making.
+- Takeover for each link: *Jump* (as before), *Grab* (the parameter stays put and moves by
+  however far your hand moves, so engaging never jumps) or *Pickup* (it waits until your hand
+  passes its value). *Return* puts the parameter back where it was when you let go.
+- FX slots get an **On** switch (automatable) and the same clutch gestures for their hand
+  modulation: let go and the knobs stay where they are.
+
+### Changed
+- Links now run inside the device's external instead of patch objects: same ranges, curves and
+  Movement switch, now with engaging, takeover and a status per link.
+
 ## [0.3.0] - 2026-10-08
 
 The first normal release with the Windows version; it collects 0.3.0-beta.1 and beta.2.

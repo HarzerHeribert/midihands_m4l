@@ -7,16 +7,19 @@
 //      report             the page opened: resend every name and the selection
 //      label <k> id <n>   link k now points at id n (0 = nothing)
 //      link <k>           link k to the selected parameter, or listen for a click
+//      read <k>           mh.hands asks where link k's parameter is now
 // out: mapname <k> <text>   "<none>" when unlinked
 //      selected <text>      the selected parameter, "<none>" if there is none
 //      setid <k> id <n>     store id n as link k's target
 //      listen <k>           nothing selected: let link k wait for a click in Live
+//      value <k> <v>        link k's parameter, normalized 0..1 as live.remote~ takes it (-1: unknown)
 
 autowatch = 0;
 inlets = 1;
 outlets = 1;
 
 const labels = {};
+const ids = {};
 let selectedId = 0;
 let selectedLabel = "<none>";
 let observer = null;
@@ -75,7 +78,15 @@ function report() {
 
 function label(k, word, id) {
   init();
-  labels[k] = describe(Number(id) || 0);
+  ids[k] = Number(id) || 0;
+  // A click that only brings Live's window to the front can hand live.map a
+  // view instead of a parameter: drop it rather than keep a broken link.
+  if (ids[k] && new LiveAPI("id " + ids[k]).type !== "DeviceParameter") {
+    ids[k] = 0;
+    outlet(0, "setid", k, "id", 0);
+    return;
+  }
+  labels[k] = describe(ids[k]);
   outlet(0, "mapname", k, labels[k]);
 }
 
@@ -83,4 +94,14 @@ function link(k) {
   init();
   if (selectedId) outlet(0, "setid", k, "id", selectedId);
   else outlet(0, "listen", k);
+}
+
+function read(k) {
+  let value = -1;
+  if (ids[k]) {
+    const param = new LiveAPI("id " + ids[k]);
+    const lo = Number(param.get("min")), hi = Number(param.get("max")), v = Number(param.get("value"));
+    if (Number(param.id) !== 0 && hi > lo && isFinite(v)) value = Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
+  }
+  outlet(0, "value", k, value);
 }

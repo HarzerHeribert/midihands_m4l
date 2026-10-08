@@ -54,11 +54,17 @@ Read README.md first.
   device sits on the track it listens to.
 - FX modulation sources are `MOD_SOURCES` in the generator (hand movements, then letter x
   feature): append only, Sets store the index.
-- Links (MOVE) are a fixed pool of `LINKS` in the generator. A link's target id lives in a
+- Links (MOVE) are a fixed pool of `LINKS` in the generator. `core/links` decides what each
+  link does (engage on a clutch gesture from `core/clutch`, Jump/Grab/Pickup takeover, Return)
+  and `mh.hands` sends it as `link <k> value|attach|detach` on its fifth outlet; the patch only
+  carries that out with a `line~` and a `live.remote~` per link. A link's target id lives in a
   `live.object` saved with `_persistence 1` (as in Ableton's own mapping snippets);
-  `live.remote~` only gets it while the link and Movement are on. `mh-links.js` follows Live's
-  selected parameter and names targets. Nothing may touch Live API objects before
-  `---mh_boot` (live.thisdevice).
+  `mh-links.js` follows Live's selected parameter, names targets and answers `read <k>` with
+  the parameter's normalized value. Nothing may touch Live API objects before `---mh_boot`
+  (live.thisdevice); the patch sends `linksready` then.
+- Engage options (`ENGAGE` in the generator, `clutchFor()` in `core/clutch.hpp`, `ENGAGE` in
+  the pages) and takeover modes are stored as indices: append only. New parameters go at the
+  end of `stored_params()`, so older Sets keep their parameter order.
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
 - Work on `main`; this is a solo project. The owner alone decides what is merged.
 - The version lives in `VERSION` (compiled in as `MH_VERSION`, see `core/version.hpp`);

@@ -7,9 +7,11 @@
 
 #include "../core/assign.hpp"
 #include "../core/audio.hpp"
+#include "../core/clutch.hpp"
 #include "../core/engine.hpp"
 #include "../core/features.hpp"
 #include "../core/filters.hpp"
+#include "../core/links.hpp"
 #include "../core/music.hpp"
 #include "../core/preview.hpp"
 #include "../core/version.hpp"
@@ -481,6 +483,247 @@ TEST(audio_auto_level_fills_range) {
     if (autoLevel) CHECK(std::fabs(quiet.features().level - loud.features().level) < 0.1f);
     else CHECK(quiet.features().level < loud.features().level - 0.5f);
   }
+}
+
+TEST(thumb_span_tells_tucked_relaxed_and_out) {
+  auto hand = makeHand(0.5f, 0.5f, kOpen);
+  const auto span = [&](Point tip) {
+    hand[kThumbTip] = tip;
+    return computeFeatures({true, 1.f, hand}, Right, 1.f).thumbSpan;
+  };
+  CHECK(span({0.475f, 0.455f}) < HandClutches::kThresholds[GestureThumbIn].on);    // against the index finger
+  const float relaxed = span({0.38f, 0.42f});
+  CHECK(relaxed > HandClutches::kThresholds[GestureThumbIn].off && relaxed < HandClutches::kThresholds[GestureThumbOut].off);
+  CHECK(span({0.25f, 0.48f}) > HandClutches::kThresholds[GestureThumbOut].on);     // stuck out
+}
+
+TEST(clutch_gestures_settle_hold_and_let_go) {
+  HandClutches c;
+  HandFeatures f;
+  f.present = true;
+  f.thumbSpan = 0.6f;
+  f.curl.fill(1.f);
+  double t = 0.0;
+  const auto at = [&](double dt, bool usable = true) { t += dt; return c.apply(f, usable, t); };
+  CHECK(!at(0.0)[GestureThumbOut]);
+  f.thumbSpan = 1.2f;
+  CHECK(!at(1 / 30.0)[GestureThumbOut]);  // a single frame does not count yet
+  CHECK(!at(1 / 30.0)[GestureThumbOut]);
+  CHECK(at(1 / 30.0)[GestureThumbOut]);
+  f.thumbSpan = 0.9f;                      // between the thresholds: stays out
+  CHECK(at(0.1)[GestureThumbOut]);
+  f.thumbSpan = 0.5f;
+  at(1 / 30.0);
+  CHECK(!at(0.1)[GestureThumbOut]);
+  f.curl[Pinky] = 0.f;  // all fingers straight: not a pinky gesture
+  f.curl[Index] = f.curl[Middle] = f.curl[Ring] = 0.f;
+  at(1 / 30.0);
+  CHECK(!at(0.1)[GesturePinky]);
+  f.fist = 0.9f;
+  f.curl[Index] = f.curl[Middle] = f.curl[Ring] = 0.9f;  // the pinky up on its own
+  at(1 / 30.0);
+  const auto g = at(0.1);
+  CHECK(g[GestureFist] && g[GesturePinky] && !g[GestureThumbIn]);
+  CHECK(!at(1 / 30.0, false)[GestureFist]);  // hand lost: lets go at once
+}
+
+TEST(engage_options_name_a_hand_and_a_gesture) {
+  Gestures g{};
+  g[Right][GestureFist] = true;
+  CHECK(engaged(kEngageAlways, g));
+  CHECK(engaged(clutchFor(Right, GestureFist), g));
+  CHECK(!engaged(clutchFor(Left, GestureFist), g));
+  CHECK(!engaged(clutchFor(Right, GesturePinky), g));
+  CHECK(clutchFor(Left, GestureThumbOut) == 1 && clutchFor(Right, GesturePinky) == kClutches);
+}
+
+namespace {
+struct LinkRig {
+  Links links;
+  std::vector<LinkEvent> ev;
+  std::array<float, kExpr> expr{};
+  Gestures g{};
+  double t = 0.0;
+  LinkRig(LinkParams p) {
+    p.source = RHeight;
+    links.setParams(0, p);
+    links.setTarget(0, 42);
+    links.setReady(true);
+    links.setMovement(true);
+  }
+  void step(float height, double dt = 1 / 30.0) {
+    expr[RHeight] = height;
+    t += dt;
+    links.setInput(expr, g);
+    ev.clear();
+    links.update(t, ev);
+  }
+  int count(LinkEvent::Kind kind) const {
+    int n = 0;
+    for (const auto& e : ev) n += e.kind == kind;
+    return n;
+  }
+  float value() const {
+    for (auto e = ev.rbegin(); e != ev.rend(); ++e)
+      if (e->kind == LinkEvent::Value) return e->value;
+    return -1.f;
+  }
+  bool near(float v) const { return std::fabs(value() - v) < 1e-4f; }
+};
+}  // namespace
+
+TEST(links_jump_to_the_hand_and_need_a_target) {
+  LinkRig r(LinkParams{});
+  r.step(0.3f);
+  CHECK(r.near(0.3f) && r.count(LinkEvent::Attach) == 1 && r.ev[0].kind == LinkEvent::Value && r.ev[0].rampMs == 0.f);
+  r.step(0.4f);
+  CHECK(r.near(0.4f) && r.ev[0].rampMs > 0.f && r.count(LinkEvent::Attach) == 0);
+  r.links.setTarget(0, 0);
+  r.step(0.5f);
+  CHECK(r.count(LinkEvent::Detach) == 1);
+  r.step(0.6f);
+  CHECK(r.ev.empty());
+}
+
+TEST(links_clutch_engages_and_lets_go_in_place) {
+  LinkParams p;
+  p.engage = clutchFor(Left, GestureFist);
+  LinkRig r(p);
+  r.step(0.3f);
+  CHECK(r.ev.empty() && r.links.state(0) == LinkIdle);
+  r.g[Left][GestureFist] = true;
+  r.step(0.5f);
+  CHECK(r.near(0.5f) && r.count(LinkEvent::Attach) == 1 && r.links.state(0) == LinkMoving);
+  r.step(0.6f);
+  CHECK(r.near(0.6f));
+  r.g[Left][GestureFist] = false;
+  r.step(0.9f);
+  CHECK(r.count(LinkEvent::Detach) == 1 && r.count(LinkEvent::Value) == 0);  // stays where it was
+}
+
+TEST(links_grab_moves_on_from_the_parameter) {
+  LinkParams p;
+  p.takeover = TakeoverGrab;
+  LinkRig r(p);
+  r.step(0.8f);
+  CHECK(r.count(LinkEvent::Read) == 1 && r.count(LinkEvent::Attach) == 0);
+  r.links.parameterValue(0, 0.2f);
+  r.step(0.8f);
+  CHECK(r.near(0.2f) && r.count(LinkEvent::Attach) == 1);  // no jump to the hand's 0.8
+  r.step(0.9f);
+  CHECK(r.near(0.3f));
+  r.step(0.7f);
+  CHECK(r.near(0.1f));
+  r.step(0.0f);
+  CHECK(r.near(0.f));
+  r.step(0.1f);
+  CHECK(r.near(0.1f));  // back up at once, like a knob at its end stop
+
+  LinkRig silent(p);  // nobody answers: carries on after the timeout
+  silent.step(0.6f);
+  silent.step(0.6f, Links::kReadTimeout);
+  CHECK(silent.count(LinkEvent::Attach) == 1 && silent.near(0.6f));
+}
+
+TEST(links_pickup_waits_for_the_hand) {
+  LinkParams p;
+  p.takeover = TakeoverPickup;
+  LinkRig r(p);
+  r.step(0.8f);
+  r.links.parameterValue(0, 0.5f);
+  r.step(0.8f);
+  CHECK(r.ev.empty() && r.links.state(0) == LinkWaiting);
+  r.step(0.6f);
+  CHECK(r.ev.empty());
+  r.step(0.45f);  // passed it
+  CHECK(r.near(0.45f) && r.count(LinkEvent::Attach) == 1);
+  r.step(0.4f);
+  CHECK(r.near(0.4f));
+
+  LinkRig w(p);  // switched to Jump while waiting: takes over at once
+  w.step(0.8f);
+  w.links.parameterValue(0, 0.5f);
+  w.step(0.8f);
+  p.takeover = TakeoverJump;
+  p.source = RHeight;
+  w.links.setParams(0, p);
+  w.step(0.8f);
+  CHECK(w.near(0.8f) && w.count(LinkEvent::Attach) == 1);
+}
+
+TEST(links_return_puts_the_parameter_back) {
+  LinkParams p;
+  p.engage = clutchFor(Right, GestureThumbOut);
+  p.ret = true;
+  LinkRig r(p);
+  r.g[Right][GestureThumbOut] = true;
+  r.step(0.7f);
+  CHECK(r.count(LinkEvent::Read) == 1);
+  r.links.parameterValue(0, 0.25f);
+  r.step(0.7f);
+  CHECK(r.near(0.7f) && r.count(LinkEvent::Attach) == 1);
+  r.g[Right][GestureThumbOut] = false;
+  r.step(0.7f);
+  CHECK(r.near(0.25f) && r.count(LinkEvent::Detach) == 0);
+  CHECK(std::fabs(r.links.deadline() - (r.t + Links::kReturnSettle)) < 1e-9);
+  r.step(0.7f, Links::kReturnSettle);
+  CHECK(r.count(LinkEvent::Detach) == 1 && r.links.deadline() < 0.0);
+}
+
+TEST(links_follow_the_movement_switch_and_new_targets) {
+  LinkRig r(LinkParams{});
+  r.step(0.3f);
+  r.links.setMovement(false);
+  r.step(0.3f);
+  CHECK(r.count(LinkEvent::Detach) == 1);
+  r.links.setMovement(true);
+  r.step(0.3f);
+  CHECK(r.count(LinkEvent::Attach) == 1);
+  r.links.setTarget(0, 43);
+  r.step(0.3f);
+  CHECK(r.ev.size() == 3 && r.ev[0].kind == LinkEvent::Detach && r.ev[2].kind == LinkEvent::Attach);
+}
+
+TEST(links_shape_ranges_curves_and_inversion) {
+  Links links;
+  LinkParams p;
+  p.lo = 0.2f;
+  p.hi = 0.6f;
+  p.min = 1.f;
+  p.max = 0.f;  // inverted
+  links.setParams(0, p);
+  CHECK(std::fabs(links.shape(0, 0.2f) - 1.f) < 1e-5f && std::fabs(links.shape(0, 0.6f)) < 1e-5f);
+  CHECK(std::fabs(links.shape(0, 0.9f)) < 1e-5f);
+  p.min = 0.f;
+  p.max = 1.f;
+  p.curve = 50.f;  // exponent 2
+  links.setParams(0, p);
+  CHECK(std::fabs(links.shape(0, 0.4f) - 0.25f) < 1e-5f);
+}
+
+TEST(held_movements_follow_only_while_engaged) {
+  HeldMovements h;
+  std::array<float, kExpr> expr{};
+  Gestures g{};
+  const int c = clutchFor(Right, GestureThumbOut);
+  expr[LHeight] = 0.5f;
+  h.apply(expr, g);
+  CHECK(h.value(c, LHeight) == 0.5f);
+  expr[LHeight] = 0.8f;
+  h.apply(expr, g);
+  CHECK(h.value(c, LHeight) == 0.5f);
+  g[Right][GestureThumbOut] = true;
+  expr[LHeight] = 0.9f;
+  h.apply(expr, g);
+  CHECK(std::fabs(h.value(c, LHeight) - 0.6f) < 1e-5f);
+  CHECK(std::fabs(h.value(clutchFor(Left, GestureFist), LHeight) - 0.5f) < 1e-5f);
+  g[Right][GestureThumbOut] = false;
+  expr[LHeight] = 0.2f;
+  h.apply(expr, g);
+  g[Right][GestureThumbOut] = true;
+  expr[LHeight] = 0.3f;
+  h.apply(expr, g);
+  CHECK(std::fabs(h.value(c, LHeight) - 0.7f) < 1e-5f);
 }
 
 int main() {

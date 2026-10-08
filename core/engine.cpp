@@ -166,6 +166,8 @@ Output Engine::process(const Frame& raw) {
       out.fingerOn[s][finger] = fs.on;
     }
 
+    out.gestures[s] = clutch_[s].apply(f, usable, now);
+
     if (hand.present) {
       const float values[5] = {f.height, f.x, f.pinch, f.fist, f.tilt};
       for (int i = 0; i < 5; ++i) expr_[s * 5 + i] = smooth_[s * 5 + i].apply(values[i], dt);

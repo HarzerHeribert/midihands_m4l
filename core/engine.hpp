@@ -5,6 +5,7 @@
 #include <array>
 #include <vector>
 
+#include "clutch.hpp"
 #include "features.hpp"
 #include "filters.hpp"
 #include "hands.hpp"
@@ -62,6 +63,7 @@ struct Output {
   std::vector<MidiEvent> midi;
   std::array<float, kExpr> expr{};
   std::array<bool, kSides> handPresent{};
+  Gestures gestures{};  // clutch gestures held, per hand
   std::array<std::array<bool, kFingers>, kSides> fingerOn{};
   Frame frame;  // filtered landmarks, for display
 };
@@ -104,6 +106,7 @@ class Engine {
   std::array<std::array<FingerState, kFingers>, kSides> fingers_{};
   std::array<double, kSides> lastSeen_{};
   std::array<HandFeatures, kSides> lastFeatures_{};
+  std::array<HandClutches, kSides> clutch_{};
   std::array<Smoother, kExpr> smooth_{};
   std::array<float, kExpr> expr_{};
   std::array<int, kExpr> lastCc_{};

@@ -58,6 +58,12 @@ HandFeatures computeFeatures(const Hand& hand, Side side, float aspect) {
   const float pinchSpan = dist(lm[kThumbTip], lm[kTip[Index]], aspect) / palmLen;
   f.pinch = clamp01((1.f - pinchSpan) / 0.8f);
 
+  // Nearest index or middle finger joint (and the ring finger's base, for a
+  // thumb tucked across the palm).
+  float near = 1e9f;
+  for (int i : {5, 6, 7, 9, 10, 11, 13}) near = std::min(near, dist(lm[kThumbTip], lm[i], aspect));
+  f.thumbSpan = near / palmLen;
+
   float sum = 0.f, lo = 1.f;
   for (int i = Index; i <= Pinky; ++i) {
     sum += f.curl[i];
