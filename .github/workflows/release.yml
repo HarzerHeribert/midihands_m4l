@@ -1,0 +1,45 @@
+name: Release
+
+# Pushing a vX.Y.Z tag publishes a release. Running it by hand builds the
+# release zip as an artifact only (a dry run).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Tag matches VERSION
+        if: github.ref_type == 'tag'
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - name: Build release zip
+        run: make dist
+      - name: Release notes from CHANGELOG.md
+        run: |
+          v="$(cat VERSION)"
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > dist/notes.md
+          printf '\n### Install\n\n```\ncurl -fsSL https://github.com/%s/releases/latest/download/install.sh | bash\n```\n\nNeeds macOS 14+ and Ableton Live 12 with Max for Live. Details in INSTALL.txt inside the zip.\n' "$GITHUB_REPOSITORY" >> dist/notes.md
+      - name: Publish
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/MidiHands-macOS.zip dist/install.sh dist/SHA256SUMS \
+            --title "MidiHands $(cat VERSION)" --notes-file dist/notes.md --verify-tag
+      - name: Keep the build (dry run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MidiHands-macOS
+          path: dist/

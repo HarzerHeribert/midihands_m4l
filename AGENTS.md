@@ -36,4 +36,11 @@ Read README.md first.
   selected parameter and names targets. Nothing may touch Live API objects before
   `---mh_boot` (live.thisdevice).
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
-- Work on `main`; this is a solo project.
+- Work on `main`; this is a solo project. The owner alone decides what is merged.
+- The version lives in `VERSION` (compiled in as `MH_VERSION`, see `core/version.hpp`);
+  releases follow RELEASING.md (`scripts/release.sh`, tag push, Release workflow). Keep
+  `CHANGELOG.md` `[Unreleased]` up to date with user-visible changes.
+- `scripts/install.sh` is what users and the device's Update button run: keep it working
+  both from an unzipped release folder and piped from `releases/latest/download/`.
+- `mac/updater` talks to GitHub (release check, cached for an hour); nothing else in the
+  device goes online.

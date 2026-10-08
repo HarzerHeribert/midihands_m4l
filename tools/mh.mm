@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <regex>
 #include <string>
 #include <thread>
@@ -24,6 +25,8 @@
 
 #include "../core/assign.hpp"
 #include "../core/engine.hpp"
+#include "../core/version.hpp"
+#include "../mac/updater.hpp"
 #include "../core/preview.hpp"
 #include "../mac/camera_hub.hpp"
 #include "../mac/tracker.hpp"
@@ -137,6 +140,23 @@ int cmdCompare(const std::vector<std::string>& clips, int layout) {
                 l.empty() ? 0.0 : sum / l.size(), unmatched[v]);
   }
   return 0;
+}
+
+// Same check the device runs when its editor opens.
+int cmdCheckUpdate() {
+  dispatch_semaphore_t done = dispatch_semaphore_create(0);
+  auto status = std::make_shared<int>(0);
+  checkForUpdate([status, done](const UpdateCheck& r) {
+    if (!r.ok) std::printf("check failed: %s\n", r.error.c_str()), *status = 1;
+    else if (r.latest.empty()) std::printf("this is %s; no release published yet\n", kVersion);
+    else std::printf("this is %s; latest release %s%s\n", kVersion, r.latest.c_str(), r.newer ? " (update available)" : "");
+    dispatch_semaphore_signal(done);
+  });
+  if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC)) != 0) {
+    std::printf("check timed out\n");
+    return 1;
+  }
+  return *status;
 }
 
 int cmdReplay(const std::vector<std::string>& clips, const std::string& phasesPath, int layout) {
@@ -303,7 +323,7 @@ int main(int argc, const char** argv) {
   @autoreleasepool {
     std::vector<std::string> args(argv + 1, argv + argc);
     if (args.empty()) {
-      std::fprintf(stderr, "usage: mh cameras | mh replay <clip>... [--phases corpus.yaml] [--layout keys|chords|split] | mh live [camera] [--seconds N] [--instances N] | mh snapshot <clip> <frame> <out.png>\n");
+      std::fprintf(stderr, "usage: mh version | mh checkupdate | mh cameras | mh replay <clip>... [--phases corpus.yaml] [--layout keys|chords|split] | mh live [camera] [--seconds N] [--instances N] | mh snapshot <clip> <frame> <out.png>\n");
       return 2;
     }
     const std::string cmd = args[0];
@@ -323,6 +343,8 @@ int main(int argc, const char** argv) {
       } else positional.push_back(args[i]);
     }
     if (cmd == "cameras") return cmdCameras();
+    if (cmd == "version") return std::printf("%s\n", kVersion), 0;
+    if (cmd == "checkupdate") return cmdCheckUpdate();
     if (cmd == "replay" && compare) return cmdCompare(positional, layout);
     if (cmd == "replay") return cmdReplay(positional, phases, layout);
     if (cmd == "live") return cmdLive(positional.empty() ? "" : positional[0], seconds, instances);

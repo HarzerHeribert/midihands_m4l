@@ -16,7 +16,29 @@ camera and Apple's Vision hand-pose model on the Neural Engine/GPU.
   Light matters too: webcams lower their frame rate in dim rooms (a 30 fps webcam ran at
   15 fps at night). The device shows the live frame rate under the hand view.
 
-## Build and install
+## Install
+
+In Terminal:
+
+```bash
+curl -fsSL https://github.com/HarzerHeribert/midihands_m4l/releases/latest/download/install.sh | bash
+```
+
+Then restart Live and find **MidiHands** in the browser under User Library > Presets >
+MIDI Effects > Max MIDI Effect (or search for it). Drop it on a MIDI track before an
+instrument and switch the camera on; the first time, allow Live to use the camera.
+
+Or download `MidiHands-macOS.zip` from [Releases](https://github.com/HarzerHeribert/midihands_m4l/releases),
+unzip it and run `./install.sh` in that folder. `./uninstall.sh` removes everything again.
+
+Why a script: MidiHands contains a native camera external that is ad-hoc signed, not
+notarized by Apple. macOS blocks such files when they come from a browser download; the
+script installs without that flag (and checks the download's SHA-256).
+
+**Updates:** the editor checks GitHub for a newer release when it opens and shows an
+**Update** button; restart Live afterwards. Running the install command again works too.
+
+## Build from source
 
 ```bash
 git submodule update --init   # Max SDK
@@ -133,10 +155,17 @@ mark arrival at the Mac, so sensor exposure and transport delay are not included
 ./build/mh snapshot clip.mp4 480 frame.png                # render a camera picture with hands
 ```
 
-## Shipping a build
+## Releases
 
-Open the device in Live's Max editor and click **Freeze**: this embeds the external and the
-view script. The editor page is loaded by name at runtime, so check that a frozen device still
-finds `mh-editor.html` without the package installed (not tested yet). After rebuilding the
-external, restart Live: Max loads a native object once per session. For other people's Macs the
-external also has to be signed with a Developer ID and notarized.
+See [RELEASING.md](RELEASING.md): `scripts/release.sh X.Y.Z`, push the tag, and GitHub Actions
+publishes the zip, the install script and checksums. `make dist` builds the same zip locally.
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+The device is shipped unfrozen next to its Max package (installed together by the script):
+the editor page and scripts are loaded from the package at runtime. A Developer ID
+signature and notarization would allow a double-click installer later.
+
+## License
+
+All rights reserved; official release builds are free to use. See [LICENSE](LICENSE).
+Issues and suggestions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).

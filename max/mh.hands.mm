@@ -19,13 +19,16 @@
 //   finger <key 0-7> <mode 0-2> <degree> <octave>, or one field at a time:
 //   fingermode|fingerdeg|fingeroct <key> <value>
 //   "layout 0-2" loads that preset into the finger table; 3 (custom) keeps it.
-//   report: resend assets url, status, picture and finger layout (an editor page opened)
+//   report: resend version, assets url, status, picture and finger layout (an editor page
+//     opened), and check GitHub for a newer release
+//   checkupdate, update: check for / install the latest release (mac/updater)
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
 //   1 expression values: 10 floats 0-1 (see kExprNames)
 //   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
 //   3 info: cameras, status, stats, error, picture <url>, assets <url> (Live's fonts),
+//      version <x.y.z>, update available|current|unknown|installing|installed|failed [text],
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
 //      scaleinfo <root> <intervals...>
 #include "ext.h"
@@ -38,8 +41,10 @@
 #include <vector>
 
 #include "../core/engine.hpp"
+#include "../core/version.hpp"
 #include "../mac/camera_hub.hpp"
 #include "../mac/preview_server.hpp"
+#include "../mac/updater.hpp"
 
 namespace {
 
@@ -79,6 +84,9 @@ struct State {
   std::string lastLayout;
   mh::CameraInfo camera;
   int cameraUsers = 0;
+  // Update check / install result, handed to the main thread by updateQelem.
+  std::string update;      // "available", "current", "unknown", "installing", "installed", "failed"
+  std::string updateText;  // version or reason
 };
 
 }  // namespace
@@ -93,6 +101,7 @@ typedef struct _mh_hands {
   t_qelem* viewQelem;
   t_qelem* layoutQelem;
   t_qelem* accessQelem;
+  t_qelem* updateQelem;
   t_symbol* pendingCamera;
   long pendingCameraIndex;
   long subscription;  // CameraHub subscriber id, 0 while closed
@@ -287,7 +296,51 @@ static void mh_status(t_mh_hands* x) {
   }
 }
 
+// Main thread: report the update state set by a background callback.
+static void mh_updateOut(t_mh_hands* x) {
+  std::string state, text;
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    state = x->st->update;
+    text = x->st->updateText;
+  }
+  if (state.empty()) return;
+  t_atom a[2];
+  atom_setsym(a, gensym(state.c_str()));
+  atom_setsym(a + 1, gensym(text.c_str()));
+  mh_info(x, "update", text.empty() ? 1 : 2, a);
+}
+
+static void mh_setUpdate(t_mh_hands* x, const std::string& state, const std::string& text) {
+  std::lock_guard<std::mutex> alive(gAliveMutex);
+  if (!gAlive.count(x)) return;  // the device went away while GitHub answered
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    x->st->update = state;
+    x->st->updateText = text;
+  }
+  qelem_set(x->updateQelem);
+}
+
+static void mh_checkupdate(t_mh_hands* x) {
+  mh::checkForUpdate([x](const mh::UpdateCheck& r) {
+    if (!r.ok) mh_setUpdate(x, "unknown", r.error);
+    else if (r.newer) mh_setUpdate(x, "available", r.latest);
+    else mh_setUpdate(x, "current", r.latest);
+  });
+}
+
+static void mh_update(t_mh_hands* x) {
+  mh_setUpdate(x, "installing", "");
+  mh::installUpdate([x](bool ok, const std::string& message) {
+    mh_setUpdate(x, ok ? "installed" : "failed", message);
+  });
+}
+
 static void mh_report(t_mh_hands* x) {
+  t_atom v;
+  atom_setsym(&v, gensym(mh::kVersion));
+  mh_info(x, "version", 1, &v);
   const std::string assets = mh::PreviewServer::shared().baseUrl();
   if (!assets.empty()) {
     t_atom a;
@@ -296,6 +349,7 @@ static void mh_report(t_mh_hands* x) {
   }
   mh_status(x);
   mh_layoutOut(x, true);
+  mh_checkupdate(x);
 }
 
 static void mh_start(t_mh_hands* x) {
@@ -468,6 +522,7 @@ static void* mh_new(t_symbol*, long, t_atom*) {
   x->viewQelem = qelem_new(x, reinterpret_cast<method>(mh_view));
   x->layoutQelem = qelem_new(x, reinterpret_cast<method>(mh_layout));
   x->accessQelem = qelem_new(x, reinterpret_cast<method>(mh_start));
+  x->updateQelem = qelem_new(x, reinterpret_cast<method>(mh_updateOut));
   x->pendingCamera = gensym("");
   x->pendingCameraIndex = -1;
   x->subscription = 0;
@@ -484,6 +539,7 @@ static void mh_free(t_mh_hands* x) {
   }
   if (x->subscription) mh::CameraHub::shared().unsubscribe(x->subscription);  // no callbacks after this
   qelem_free(x->accessQelem);
+  qelem_free(x->updateQelem);
   qelem_free(x->viewQelem);
   qelem_free(x->layoutQelem);
   object_free(x->flushClock);
@@ -502,6 +558,8 @@ void ext_main(void*) {
   for (const char* field : {"fingermode", "fingerdeg", "fingeroct"})
     class_addmethod(c, reinterpret_cast<method>(mh_fingerField), field, A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_report), "report", 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_checkupdate), "checkupdate", 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_update), "update", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_scale), "scale", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_anything), "anything", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_assist), "assist", A_CANT, 0);

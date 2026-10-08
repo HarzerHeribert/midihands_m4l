@@ -15,9 +15,9 @@
 	<key>CFBundleSignature</key>
 	<string>max2</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>@VERSION@</string>
 	<key>CFBundleVersion</key>
-	<string>0.1.0</string>
+	<string>@VERSION@</string>
 	<key>NSCameraUsageDescription</key>
 	<string>midihands turns your hand movements into MIDI.</string>
 </dict>

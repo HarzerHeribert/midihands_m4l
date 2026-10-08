@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Version is consistent
+        run: make check-version
+      - name: Build external, CLI and device; run tests
+        run: make all
+      - name: Device file is the generated one
+        run: python3 device/build_device.py && git diff --exit-code -- device/MidiHands.amxd
+      - run: ./build/mh version

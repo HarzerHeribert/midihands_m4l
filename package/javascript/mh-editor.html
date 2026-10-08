@@ -14,6 +14,8 @@
     expr <10 values>           hand movements 0-1, every camera frame
     status / stats / error     camera state
     assets <url>               local server base: /font/<file> serves Live's fonts
+    version <x.y.z>            this build
+    update <state> [text]      available <v> | current | unknown | installing | installed | failed <why>
     picture <url>              MJPEG stream of the camera, loopback only
     fingertable <24>           mode, degree, octave per finger key
     fingers <40>               per key: note count + 4 notes (-1 = none)
@@ -23,7 +25,7 @@
     selected <text>            the parameter selected in Live, "<none>" if none
   page -> Max (window.max.outlet):
     set <key> <value>, link <k> (to the selected parameter, or wait for a click),
-    unlink <k>, hello
+    unlink <k>, hello, update (install the latest release)
   Camera data arrives at the camera's frame rate and is drawn as it arrives,
   in step with the picture: no easing, so nothing trails the hand.
   Without Max (opened in a browser) the page runs a demo with fake hands.
@@ -81,6 +83,10 @@ select:disabled { color: var(--dim); }
 /* --- frame --------------------------------------------------------------- */
 header { height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 10px; background: var(--surface); border-bottom: 1px solid var(--frame); }
 header .title { font-weight: 700; color: var(--fg-hi); }
+header .ver { color: var(--dim); margin-left: -6px; }
+#updBtn { display: none; }
+#updBtn.show { display: block; }
+#updBtn:disabled { opacity: .7; cursor: default; }
 header #tabs button { padding: 2px 14px; min-height: 20px; }
 .status { margin-left: auto; display: flex; gap: 14px; color: var(--dim); white-space: nowrap; }
 .status b { font-weight: 400; color: var(--fg); }
@@ -186,12 +192,13 @@ body.move-off .hand { opacity: .5; }
 </head>
 <body>
 <header>
-  <span class="title">MidiHands</span>
+  <span class="title">MidiHands</span><span class="ver" id="ver"></span>
   <div class="seg" id="tabs"><button data-page="play" class="on" data-info="Play: what your fingers play.">Play</button><button data-page="move" data-info="Move: map hand movements to any parameter in Live.">Move</button></div>
   <div class="master">
     <button class="tog" id="notesTog" data-info="Notes on/off. Off: fingers play nothing, movements keep working. Automatable and mappable.">Notes</button>
     <button class="tog" id="moveTog" data-info="Movement on/off. Off: mapped parameters are released (turn them by hand, automation plays) and no CC is sent. Automatable and mappable.">Movement</button>
   </div>
+  <button class="tog on" id="updBtn" data-info="Downloads and installs the new release. Restart Live afterwards.">Update</button>
   <div class="status"><span><i id="dot"></i><b id="camName">Camera off</b></span><span id="camStats"></span></div>
 </header>
 
@@ -369,6 +376,17 @@ function onAssets(base) {
     new FontFace("AbletonSansSmall", `url(${base}/font/${file})`, { weight }).load().then((f) => document.fonts.add(f)).catch(() => {});
   }
 }
+function onVersion(v) { $("ver").textContent = String(v); }
+function onUpdate(state, text = "") {
+  const b = $("updBtn");
+  b.classList.toggle("show", ["available", "installing", "installed", "failed"].includes(state));
+  b.disabled = state === "installing" || state === "installed";
+  if (state === "available") { S.latest = String(text); b.textContent = `Update to ${S.latest}`; message(`MidiHands ${S.latest} is available.`, 6000); }
+  if (state === "installing") b.textContent = "Updating…";
+  if (state === "installed") { b.textContent = "Restart Live to finish"; message("Update installed. Restart Live to use it.", 10000); }
+  if (state === "failed") { b.textContent = S.latest ? `Update to ${S.latest}` : "Update"; message(`Update failed: ${text}`, 15000); }
+}
+$("updBtn").onclick = () => send("update");
 function onPicture(url) { if ($("picture").getAttribute("src") !== url) $("picture").src = url; }
 function onFingertable(...a) { for (let k = 0; k < 8; k++) S.table[k] = [a[k * 3], a[k * 3 + 1], a[k * 3 + 2]]; render(); }
 function onFingers(...a) { for (let k = 0; k < 8; k++) { const c = a[k * 5]; S.notes[k] = a.slice(k * 5 + 1, k * 5 + 1 + c); } render(); }
@@ -383,7 +401,7 @@ function onSelected(...name) { S.liveSelected = name.join(" ").trim() || "<none>
 
 if (MAX) {
   const bind = { param: onParam, hands: onHands, expr: onExpr, status: onStatus, stats: onStats, error: onError, assets: onAssets,
-    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping, selected: onSelected };
+    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping, selected: onSelected, version: onVersion, update: onUpdate };
   for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
 }
 

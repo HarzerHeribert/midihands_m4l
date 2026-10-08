@@ -1,0 +1,30 @@
+MidiHands for Ableton Live
+==========================
+
+Camera hand tracking to MIDI, as a Max for Live device.
+
+You need
+  - macOS 14 or newer (Apple silicon or Intel)
+  - Ableton Live 12 Suite, or Live 12 Standard with Max for Live
+  - a camera (built-in, USB, or an iPhone via Continuity Camera)
+
+Install
+  1. Open Terminal in this folder (right-click the folder > New Terminal at Folder).
+  2. Run:  ./install.sh
+  3. Restart Live if it was running.
+  4. In Live's browser: User Library > Presets > MIDI Effects > Max MIDI Effect > MidiHands.
+     Drop it on a MIDI track before an instrument and switch the camera on.
+     The first time, macOS asks whether Live may use the camera: allow it.
+
+Why a script and not a double-click: MidiHands contains a small native program that
+reads the camera. It is not notarized by Apple, so macOS would block it if it came
+from a browser download. The script installs it the same way developers do.
+
+Updates
+  Open the device's editor: when a new release exists, an Update button appears in
+  the top bar. Or run the install command again.
+
+Remove
+  ./uninstall.sh
+
+Project page: https://github.com/HarzerHeribert/midihands_m4l

@@ -11,6 +11,7 @@
 #include "../core/filters.hpp"
 #include "../core/music.hpp"
 #include "../core/preview.hpp"
+#include "../core/version.hpp"
 
 using namespace mh;
 
@@ -80,6 +81,15 @@ int count(const std::vector<MidiEvent>& events, uint8_t type) {
 }
 
 }  // namespace
+
+TEST(versions_compare_numerically) {
+  CHECK(compareVersions("0.1.0", "0.1.0") == 0);
+  CHECK(compareVersions("v0.2.0", "0.1.9") == 1);
+  CHECK(compareVersions("0.9.0", "0.10.0") == -1);
+  CHECK(compareVersions("1.0", "1.0.0") == 0);
+  CHECK(compareVersions("0.2.0-dev", "0.2.0") == 0);
+  CHECK(compareVersions("0.0.0-dev", "0.1.0") == -1);
+}
 
 TEST(landmark_filter_follows_motion_and_can_be_off) {
   // A fingertip moving 1 normalized unit/s at 30 fps: the filter used now

@@ -40,6 +40,7 @@ NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LINKS = 16  # movement -> Live parameter links; any number may share a movement
 
 EDITOR_SIZE = (1200.0, 760.0)
+VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()
 
 # (inlets, outlets, outlet types) for object classes used below.
 PORTS = {
@@ -270,8 +271,11 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(expr_in, 0, expr_msg)
     e.connect(expr_msg, 0, ui)
 
-    # Page commands: set <key> <value>, link <k>, unlink <k>, hello.
-    commands = e.obj("route set link unlink hello", 20, 260)
+    # Page commands: set <key> <value>, link <k>, unlink <k>, hello, update.
+    commands = e.obj("route set link unlink hello update", 20, 260)
+    update_msg = e.msg("update", 600, 260)
+    e.connect(commands, 4, update_msg)
+    e.connect(update_msg, 0, to_hands)
     e.connect(ui, 0, commands)
 
     # Stored parameters: hidden live.numbox objects.
@@ -537,7 +541,7 @@ def build_editor() -> tuple[Patch, dict]:
 
     window = [80.0, 80.0, W, H]  # x, y, width, height
     return e, e.patcher(window, toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,
-                        title="MidiHands", bgcolor=[0.141, 0.141, 0.141, 1.0],
+                        title=f"MidiHands {VERSION}", bgcolor=[0.141, 0.141, 0.141, 1.0],
                         editing_bgcolor=[0.141, 0.141, 0.141, 1.0])
 
 
@@ -653,7 +657,7 @@ def build() -> dict:
 
     params = {**p.params, **editor.params, "inherited_shortname": 1}
     patcher = p.patcher([40.0, 80.0, 1500.0, 700.0], openrect=[0.0, 0.0, 0.0, 169.0],
-                        description="Camera hand tracking to MIDI", title="MidiHands",
+                        description=f"MidiHands {VERSION}: camera hand tracking to MIDI", title="MidiHands",
                         parameters=params, dependency_cache=[], latency=0, autosave=0,
                         # Without a project entry Max logs "a project without a name ... fatal".
                         project={

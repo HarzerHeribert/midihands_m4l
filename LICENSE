@@ -1,0 +1,23 @@
+MidiHands for Ableton Live
+Copyright (c) 2026 Eneas Dembach. All rights reserved.
+
+The source code in this repository is published so that it can be read and
+reviewed. No license is granted to copy, modify, merge, publish, distribute,
+sublicense or sell the source code, in whole or in part, without prior written
+permission from the copyright holder. (GitHub's terms of service still let
+GitHub users view and fork the repository on GitHub.)
+
+Official release builds from
+https://github.com/HarzerHeribert/midihands_m4l/releases may be downloaded and
+used free of charge, for making music and performing, on your own computers.
+They may not be redistributed or sold. Terms for future releases may differ.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Third-party: the Max SDK (third_party/max-sdk-base, a git submodule) is
+copyright Cycling '74 and covered by its own license, not by this one.
