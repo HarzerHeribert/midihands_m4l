@@ -90,7 +90,9 @@ uniform float u_mix;
 out vec4 o;
 void main() { o = vec4(mix(texture(u_base, v_uv).rgb, texture(u_fx, v_uv).rgb, u_mix), 1.0); }`;
 
-  // The old app's hand body: a lit, slightly wobbling field over joints and bones.
+  // The hand body ("Jelly"): slim tapered fingers smoothly joined to a glassy palm,
+  // as a signed distance field. Sized from the hand itself (knuckle spacing), so it
+  // stays slimmer than the real fingers at any distance from the camera.
   const FIELD_VERT = `#version 300 es
 precision highp float;
 in vec2 a_pos;
@@ -98,91 +100,101 @@ uniform vec4 u_rect;
 uniform vec2 u_res;
 uniform float u_yFlip;
 out vec2 v_px;
-out vec2 v_local;
 ${TO_CLIP}
 void main() {
   v_px = u_rect.xy + a_pos * u_rect.zw;
-  v_local = a_pos * 2.0 - 1.0;
   gl_Position = toClip(v_px, u_res);
 }`;
 
   const FIELD_FRAG = `#version 300 es
 precision highp float;
 #define JOINTS 21
-#define SEGS 21
 in vec2 v_px;
-in vec2 v_local;
 uniform vec2 u_joint[JOINTS];
 uniform float u_jointR[JOINTS];
-uniform vec4 u_seg[SEGS];
-uniform float u_segR[SEGS];
-uniform vec3 u_color, u_highlight;
-uniform float u_alpha, u_time, u_rate, u_phase;
+uniform float u_jointOn[JOINTS];
+uniform float u_palmR, u_k, u_R;
+uniform vec3 u_color, u_highlight, u_play;
+uniform float u_alpha, u_time, u_phase;
 out vec4 o;
-float capsule(vec2 p, vec2 a, vec2 b, float r) {
-  vec2 pa = p - a, ba = b - a;
-  float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0.0, 1.0);
-  return length(pa - ba * h) - r;
+// Fingers: thumb from the wrist, then index to pinky from their knuckles.
+const int BA[16] = int[16](0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19);
+const int BB[16] = int[16](1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20);
+const int PALM[6] = int[6](0, 1, 5, 9, 13, 17);
+float cro(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
+// A capsule whose radius changes from ra to rb (Inigo Quilez).
+float taper(vec2 p, vec2 pa, vec2 pb, float ra, float rb) {
+  p -= pa; pb -= pa;
+  float h = dot(pb, pb);
+  if (h < 1.0) return length(p) - max(ra, rb);
+  vec2 q = vec2(dot(p, vec2(pb.y, -pb.x)), dot(p, pb)) / h;
+  q.x = abs(q.x);
+  float b = ra - rb;
+  vec2 c = vec2(sqrt(max(h - b * b, 1e-3)), b);
+  float k = cro(c, q), m = dot(c, q), n = dot(q, q);
+  if (k < 0.0) return sqrt(h * n) - ra;
+  if (k > c.x) return sqrt(h * (n + 1.0 - 2.0 * q.y)) - rb;
+  return m - ra;
 }
-float wob(vec2 d, int i) {
-  float a = atan(d.y, d.x);
-  return 1.0 + 0.06 * sin(a * 2.0 + u_time * (1.05 + u_rate * 0.95) + u_phase * 6.28318)
-             + 0.035 * sin(a * 3.0 - u_time * (0.62 + u_rate * 0.82) + float(i) * 0.37);
-}
-float pulseAt(vec2 p, vec4 s) {
-  float t = clamp(length(p - s.xy) / max(length(s.zw - s.xy), 1e-4), 0.0, 1.0);
-  return 0.5 + 0.5 * sin((t - u_time * 0.18 * max(u_rate, 1e-3) - u_phase) * 6.28318);
-}
-float fieldAt(vec2 p) {
-  float total = 0.0;
-  for (int i = 0; i < JOINTS; i++) {
-    vec2 d = p - u_joint[i];
-    float dist = length(d) / max(u_jointR[i] * wob(d, i), 1e-3);
-    total += exp(-pow(dist, 2.35)) * 0.92;
+float palm(vec2 p) {
+  vec2 v0 = u_joint[PALM[0]];
+  float d = dot(p - v0, p - v0), s = 1.0;
+  int j = 5;
+  for (int i = 0; i < 6; i++) {
+    vec2 vi = u_joint[PALM[i]], vj = u_joint[PALM[j]];
+    vec2 e = vj - vi, w = p - vi;
+    vec2 b = w - e * clamp(dot(w, e) / max(dot(e, e), 1e-3), 0.0, 1.0);
+    d = min(d, dot(b, b));
+    bvec3 c = bvec3(p.y >= vi.y, p.y < vj.y, e.x * w.y > e.y * w.x);
+    if (all(c) || all(not(c))) s = -s;
+    j = i;
   }
-  for (int i = 0; i < SEGS; i++) {
-    float dist = capsule(p, u_seg[i].xy, u_seg[i].zw, u_segR[i]) / max(u_segR[i], 1e-3);
-    total += exp(-pow(max(dist, 0.0), 2.4) * 1.05) * (1.08 + pulseAt(p, u_seg[i]) * 0.12);
+  return s * sqrt(d);
+}
+float smin(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
+// x: distance (px, negative inside), y: how much a playing finger tints this point.
+// The segments of a finger join plainly (no bulging joints); only fingers and palm blend.
+vec2 scene(vec2 p) {
+  float d = palm(p) - u_palmR * 0.2, on = 0.0;
+  int bone = 0;
+  for (int f = 0; f < 5; f++) {
+    int count = f == 0 ? 4 : 3;
+    float df = 1e9;
+    for (int k = 0; k < 4; k++) {
+      if (k >= count) break;
+      int a = BA[bone], b = BB[bone];
+      df = min(df, taper(p, u_joint[a], u_joint[b], u_jointR[a], u_jointR[b]));
+      bone++;
+    }
+    on = max(on, u_jointOn[BB[bone - 1]] * (1.0 - smoothstep(-2.0, u_k, df)));
+    d = smin(d, df, u_k);
   }
-  return total;
+  return vec2(d, on);
 }
 void main() {
-  float field = 0.0, membraneField = 0.0, charge = 0.0, centerWeight = 0.0;
-  for (int i = 0; i < JOINTS; i++) {
-    vec2 d = v_px - u_joint[i];
-    float dist = length(d) / max(u_jointR[i] * wob(d, i), 1e-3);
-    float blob = exp(-pow(dist, 2.35));
-    field += blob * 0.92;
-    membraneField += exp(-pow(dist - 0.98, 2.0) * 8.5);
-    charge += blob * (0.35 + 0.65 * sin(u_time * (1.8 + u_rate * 1.2) + u_phase * 6.28318 + float(i) * 0.31));
-    centerWeight += blob;
-  }
-  for (int i = 0; i < SEGS; i++) {
-    float dist = capsule(v_px, u_seg[i].xy, u_seg[i].zw, u_segR[i]) / max(u_segR[i], 1e-3);
-    float bridge = exp(-pow(max(dist, 0.0), 2.4) * 1.05);
-    float pulse = pulseAt(v_px, u_seg[i]);
-    field += bridge * (1.08 + pulse * 0.12);
-    membraneField += exp(-pow(dist - 0.12, 2.0) * 6.8) * 0.82;
-    charge += bridge * pulse * 0.3;
-  }
-  float body = smoothstep(0.98, 1.24, field);
-  if (body < 0.001) discard;
-  float core = smoothstep(1.26, 1.82, field);
-  float membrane = smoothstep(0.18, 0.96, membraneField) * (1.0 - core * 0.44);
-  float flow = 0.5 + 0.5 * sin(length(v_local) * 9.0 - u_time * (1.5 + u_rate * 0.8) + u_phase * 6.28318 + centerWeight * 0.45);
-  float electric = clamp(charge / 18.0, 0.0, 1.0);
-  float e = 2.2;
-  float fx = fieldAt(v_px + vec2(e, 0.0)) - fieldAt(v_px - vec2(e, 0.0));
-  float fy = fieldAt(v_px + vec2(0.0, e)) - fieldAt(v_px - vec2(0.0, e));
-  vec3 n = normalize(vec3(-fx, -fy, 0.95));
-  vec3 l = normalize(vec3(-0.38, -0.46, 0.8));
-  float diffuse = max(dot(n, l), 0.0);
-  float rim = pow(1.0 - max(n.z, 0.0), 2.4);
-  float spec = pow(max(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0), 18.0);
-  float gloss = spec * (0.18 + flow * 0.12 + electric * 0.08);
-  vec3 c = u_color * (0.82 + diffuse * 0.34 + core * 0.08);
-  c = mix(c, u_highlight, gloss + rim * 0.14 + membrane * 0.05);
-  float a = u_alpha * body * (1.0 + membrane * 0.12 + gloss * 0.08);
+  vec2 s = scene(v_px);
+  float body = clamp(0.5 - s.x, 0.0, 1.0);             // 1 px soft edge
+  if (body <= 0.0) discard;
+  float R = max(u_R, 2.0);                              // one thickness for the whole hand: no seams
+  float t = clamp(-s.x / R, 0.0, 1.0);                  // 0 at the rim, 1 deep inside
+  // A rounded profile: the normal tilts outwards towards the rim.
+  float e = max(1.0, R * 0.12);
+  vec2 g = vec2(scene(v_px + vec2(e, 0.0)).x - scene(v_px - vec2(e, 0.0)).x,
+                scene(v_px + vec2(0.0, e)).x - scene(v_px - vec2(0.0, e)).x) / (2.0 * e);
+  float u = 1.0 - t;
+  float slope = u / max(sqrt(1.0 - u * u), 0.12);
+  vec3 n = normalize(vec3(g * min(slope, 6.0), 1.0));
+  vec3 L = normalize(vec3(-0.45, -0.55, 0.7));
+  float diffuse = max(dot(n, L), 0.0);
+  float spec = pow(max(dot(reflect(-L, n), vec3(0.0, 0.0, 1.0)), 0.0), 36.0);
+  float fresnel = pow(1.0 - n.z, 2.0);
+  float sheen = 0.75 + 0.25 * sin(dot(v_px, vec2(0.018, 0.031)) - u_time * 1.3 + u_phase * 6.28318);
+  vec3 base = mix(u_color, u_play, s.y * 0.7);
+  vec3 c = base * (0.5 + 0.6 * diffuse) + u_highlight * (spec * 0.85 * sheen + fresnel * 0.3);
+  // Glass: clear inside, solid at the rim; a playing finger fills up.
+  float rim = 1.0 - smoothstep(0.0, 0.45, t);
+  float a = u_alpha * body * mix(0.72, 1.0, max(rim, s.y * 0.6));
+  a = clamp(a + spec * 0.3, 0.0, 1.0);
   o = vec4(c * a, a);
 }`;
 
@@ -407,38 +419,36 @@ void main() {
         const pts = hand.pts.map(map);
         const color = hex(s ? theme.right : theme.left), hi = hex(theme.highlight);
         const fv = (i) => { const f = i <= 4 ? 0 : Math.floor((i - 1) / 4); return f > 0 && hand.on[f] ? 1 : 0; };
-        // Size follows how big the hand is on screen (old app: palm 45..220 px -> 0.3..1.9).
-        const palm = [5, 9, 13, 17].reduce((a, i) => a + Math.hypot(pts[i][0] - pts[0][0], pts[i][1] - pts[0][1]), 0) / 4 / unit;
-        const n = clamp01((0.3 + (palm - 45) / 175 * 1.6 - 0.3) / 1.6);
-        const scale = (0.18 + n * 1.1) * 2.2 * unit;
-        const motion = s ? [1.08, 0.58] : [0.84, 0.12];
+        const phase = s ? 0.58 : 0.12;  // the two hands shimmer out of step
         if (look === "jelly") {
-          const joints = new Float32Array(42), radii = new Float32Array(21), segs = new Float32Array(84), segR = new Float32Array(21);
+          // Thickness from the hand itself: the spacing of the four knuckles.
+          const dist = (i, j) => Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+          const sp = Math.max((dist(5, 9) + dist(9, 13) + dist(13, 17)) / 3, dist(0, 9) * 0.22, 3);
+          const joints = new Float32Array(42), radii = new Float32Array(21), on = new Float32Array(21);
+          // Wrist, thumb (CMC, MCP, IP, tip), then per finger: knuckle, middle joints, tip.
+          const thumb = [0.42, 0.36, 0.3, 0.26, 0.22], finger = [0.3, 0.26, 0.23, 0.2];
           let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
           for (let i = 0; i < 21; i++) {
-            const v = fv(i);
-            const rad = (i === 0 ? 9.4 : [5, 9, 13, 17].includes(i) ? 7.4 : TIPS.includes(i) ? 7.8 + v * 3.8 : 5.9 + v * 2.4) * scale;
+            const f = i <= 4 ? 0 : Math.floor((i - 1) / 4);
+            let rad = (i <= 4 ? thumb[i] : finger[(i - 1) % 4]) * sp;
+            if (f === 4) rad *= 0.88;                                  // pinky
+            on[i] = fv(i);
+            if (on[i]) rad *= 1.1;
             joints[i * 2] = pts[i][0]; joints[i * 2 + 1] = pts[i][1]; radii[i] = rad;
             x0 = Math.min(x0, pts[i][0] - rad); y0 = Math.min(y0, pts[i][1] - rad);
             x1 = Math.max(x1, pts[i][0] + rad); y1 = Math.max(y1, pts[i][1] + rad);
           }
-          BONES.forEach(([a, b], i) => {
-            const len = Math.hypot(pts[b][0] - pts[a][0], pts[b][1] - pts[a][1]);
-            const merge = 0.34 + clamp01(len / Math.max(24 * scale, 1)) * 0.9;
-            segs.set([pts[a][0], pts[a][1], pts[b][0], pts[b][1]], i * 4);
-            segR[i] = (radii[a] + radii[b]) * 0.5 * 0.42 * (1 + (merge - 1) * 0.36);
-          });
-          const pad = 18 * unit * (0.8 + n * 1.08);
+          const pad = 0.3 * sp + 3;
           const prog = progs.field;
           gl.useProgram(prog.p);
           gl.uniform4f(prog.u.u_rect, x0 - pad, y0 - pad, x1 - x0 + pad * 2, y1 - y0 + pad * 2);
           gl.uniform2f(prog.u.u_res, w, h);
           gl.uniform1f(prog.u.u_yFlip, dst ? -1 : 1);
-          gl.uniform2fv(prog.u.u_joint, joints); gl.uniform1fv(prog.u.u_jointR, radii);
-          gl.uniform4fv(prog.u.u_seg, segs); gl.uniform1fv(prog.u.u_segR, segR);
-          gl.uniform3fv(prog.u.u_color, color); gl.uniform3fv(prog.u.u_highlight, hi);
-          gl.uniform1f(prog.u.u_alpha, 0.86); gl.uniform1f(prog.u.u_time, time);
-          gl.uniform1f(prog.u.u_rate, motion[0]); gl.uniform1f(prog.u.u_phase, motion[1]);
+          gl.uniform2fv(prog.u.u_joint, joints); gl.uniform1fv(prog.u.u_jointR, radii); gl.uniform1fv(prog.u.u_jointOn, on);
+          gl.uniform1f(prog.u.u_palmR, 0.5 * sp); gl.uniform1f(prog.u.u_k, 0.22 * sp); gl.uniform1f(prog.u.u_R, 0.3 * sp);
+          gl.uniform3fv(prog.u.u_color, color); gl.uniform3fv(prog.u.u_highlight, hi); gl.uniform3fv(prog.u.u_play, hex(theme.play));
+          gl.uniform1f(prog.u.u_alpha, 0.92); gl.uniform1f(prog.u.u_time, time);
+          gl.uniform1f(prog.u.u_phase, phase);
           gl.bindVertexArray(quad); gl.drawArrays(gl.TRIANGLES, 0, 6);
         } else {
           for (const [a, b] of BONES) {

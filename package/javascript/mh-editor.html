@@ -812,7 +812,8 @@ function sourceOptions() {
 // MidiHands Audio devices changed: menus and the chips under the preview.
 function renderAudio() {
   const html = sourceOptions();
-  document.querySelectorAll(".modsrc").forEach((sel) => { const v = sel.value; sel.innerHTML = html; sel.value = v; });
+  document.querySelectorAll(".modsrc").forEach((sel) => { sel.innerHTML = html; });
+  renderFx();   // selections come from the parameters
   const box = $("audioChips");
   if (!S.audioSrc.length) {
     box.innerHTML = `<span class="none" data-info="Put MidiHands Audio on a track (or Main), and its sound can move these effects.">No MidiHands Audio in this Set</span>`;
@@ -857,7 +858,10 @@ function renderFx() {
       cell.querySelector(".dial span").textContent = name;
       cell.querySelector(".dial").dataset.info = fx ? `${fx.name}: ${name}. Drag up/down, double-click resets.` : "";
       const src = P[`x${s}m${j}s`] | 0, amt = P[`x${s}m${j}a`] || 0;
-      const sel = cell.querySelector(".modsrc"); sel.value = src; sel.classList.toggle("on", src > 0);
+      const sel = cell.querySelector(".modsrc");
+      // A stored audio source whose letter the menu does not list yet: add it.
+      if (![...sel.options].some((o) => +o.value === src)) sel.innerHTML = sourceOptions();
+      sel.value = src; sel.classList.toggle("on", src > 0);
       const bar = cell.querySelector(".modamt"), i = bar.querySelector("i");
       bar.classList.toggle("on", src > 0);
       i.style.left = `${50 + Math.min(0, amt) * 50}%`; i.style.width = `${Math.abs(amt) * 50}%`;
