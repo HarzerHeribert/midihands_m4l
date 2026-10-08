@@ -979,7 +979,7 @@ function cueList() {
 function renderPicture(fxPage, time) {
   const hands = S.drawn.map((h) => h && { pts: h.pts, on: h.on.map((v, f) => !!(v && (fxPage || P.notes))) });
   Object.assign(R.options, {
-    look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: cueList(),
+    look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: fxPage ? cueList() : [],   // Play shows notes, not cues
     camera: fxPage ? P.vcam : 0.6, grade: fxPage ? "none" : "play", fxOnHands: !!P.vfxh,
     aspect: fxPage ? MHFX.FORMATS[P.vfmt] || 0 : 0, brackets: !!P.vcues,
   });

@@ -117,9 +117,9 @@ uniform float u_palmR, u_k, u_R;
 uniform vec3 u_color, u_highlight, u_play;
 uniform float u_alpha, u_time, u_phase;
 out vec4 o;
-// Fingers: thumb from the wrist, then index to pinky from their knuckles.
-const int BA[16] = int[16](0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19);
-const int BB[16] = int[16](1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20);
+// Fingers, three bones each: the thumb from its base joint, the others from their knuckles.
+const int BA[15] = int[15](1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19);
+const int BB[15] = int[15](2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20);
 const int PALM[6] = int[6](0, 1, 5, 9, 13, 17);
 float cro(vec2 a, vec2 b) { return a.x * b.y - a.y * b.x; }
 // A capsule whose radius changes from ra to rb (Inigo Quilez).
@@ -152,27 +152,25 @@ float palm(vec2 p) {
   return s * sqrt(d);
 }
 float smin(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
-// x: distance (px, negative inside), y: how much a playing finger tints this point.
+// x: distance (px, negative inside), y: how much a playing finger tints this point,
+// z: how much this point is palm rather than finger (the palm is only a faint membrane).
 // The segments of a finger join plainly (no bulging joints); only fingers and palm blend.
-vec2 scene(vec2 p) {
-  float d = palm(p) - u_palmR * 0.2, on = 0.0;
-  int bone = 0;
+vec3 scene(vec2 p) {
+  float dp = palm(p) - u_palmR * 0.25, d = dp, fingers = 1e9, on = 0.0;
   for (int f = 0; f < 5; f++) {
-    int count = f == 0 ? 4 : 3;
     float df = 1e9;
-    for (int k = 0; k < 4; k++) {
-      if (k >= count) break;
-      int a = BA[bone], b = BB[bone];
-      df = min(df, taper(p, u_joint[a], u_joint[b], u_jointR[a], u_jointR[b]));
-      bone++;
+    for (int k = 0; k < 3; k++) {
+      int i = f * 3 + k;
+      df = min(df, taper(p, u_joint[BA[i]], u_joint[BB[i]], u_jointR[BA[i]], u_jointR[BB[i]]));
     }
-    on = max(on, u_jointOn[BB[bone - 1]] * (1.0 - smoothstep(-2.0, u_k, df)));
+    on = max(on, u_jointOn[BB[f * 3 + 2]] * (1.0 - smoothstep(-2.0, u_k, df)));
+    fingers = min(fingers, df);
     d = smin(d, df, u_k);
   }
-  return vec2(d, on);
+  return vec3(d, on, smoothstep(-u_k * 0.5, u_k * 0.5, fingers - max(dp, -u_k)));
 }
 void main() {
-  vec2 s = scene(v_px);
+  vec3 s = scene(v_px);
   float body = clamp(0.5 - s.x, 0.0, 1.0);             // 1 px soft edge
   if (body <= 0.0) discard;
   float R = max(u_R, 2.0);                              // one thickness for the whole hand: no seams
@@ -191,10 +189,15 @@ void main() {
   float sheen = 0.75 + 0.25 * sin(dot(v_px, vec2(0.018, 0.031)) - u_time * 1.3 + u_phase * 6.28318);
   vec3 base = mix(u_color, u_play, s.y * 0.7);
   vec3 c = base * (0.5 + 0.6 * diffuse) + u_highlight * (spec * 0.85 * sheen + fresnel * 0.3);
-  // Glass: clear inside, solid at the rim; a playing finger fills up.
+  // Glass: fingers clear inside and solid at the rim, a playing finger fills up; the
+  // palm only a faint membrane with a thin bright edge, so the real palm shows.
   float rim = 1.0 - smoothstep(0.0, 0.45, t);
-  float a = u_alpha * body * mix(0.72, 1.0, max(rim, s.y * 0.6));
-  a = clamp(a + spec * 0.3, 0.0, 1.0);
+  float fingerA = mix(0.55, 1.0, max(rim, s.y * 0.7));
+  float edge = 1.0 - smoothstep(0.0, 1.5 + R * 0.12, -s.x);
+  float palmA = mix(0.12, 0.7, edge);
+  c = mix(c, mix(c, u_highlight, 0.35), s.z * edge);
+  float a = u_alpha * body * mix(fingerA, palmA, s.z);
+  a = clamp(a + spec * 0.3 * (1.0 - s.z * 0.7), 0.0, 1.0);
   o = vec4(c * a, a);
 }`;
 
@@ -426,7 +429,7 @@ void main() {
           const sp = Math.max((dist(5, 9) + dist(9, 13) + dist(13, 17)) / 3, dist(0, 9) * 0.22, 3);
           const joints = new Float32Array(42), radii = new Float32Array(21), on = new Float32Array(21);
           // Wrist, thumb (CMC, MCP, IP, tip), then per finger: knuckle, middle joints, tip.
-          const thumb = [0.42, 0.36, 0.3, 0.26, 0.22], finger = [0.3, 0.26, 0.23, 0.2];
+          const thumb = [0.3, 0.34, 0.3, 0.26, 0.22], finger = [0.3, 0.26, 0.23, 0.2];
           let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
           for (let i = 0; i < 21; i++) {
             const f = i <= 4 ? 0 : Math.floor((i - 1) / 4);
