@@ -55,6 +55,7 @@ namespace mh {
 namespace {
 std::mutex gMutex;
 MHRecording* gActive = nil;
+std::atomic<bool> gStarting{false};  // between start() and the stream running
 std::string gLastFile;
 
 NSURL* newFileURL() {
@@ -83,7 +84,9 @@ std::string Recorder::lastFile() const {
 }
 
 void Recorder::start(const std::string& title, double x, double y, double w, double h, StartedFn started) {
-  if (recording()) { started(false, "already recording"); return; }
+  if (recording() || gStarting.exchange(true)) { started(false, "already recording"); return; }
+  // Every way out of starting clears gStarting before reporting.
+  started = [started](bool ok, const std::string& msg) { gStarting = false; started(ok, msg); };
   if (!CGPreflightScreenCaptureAccess()) {
     CGRequestScreenCaptureAccess();  // shows the system prompt once
     started(false, "allow Screen & System Audio Recording for Ableton Live in System Settings > Privacy & Security, then restart Live");

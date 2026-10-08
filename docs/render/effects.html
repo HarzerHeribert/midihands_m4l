@@ -1,0 +1,69 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+  .grid { position: absolute; left: 50%; top: 52%; width: 1560px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px;
+    transform: translate(-50%, -50%) perspective(2600px) rotateX(18deg) rotateZ(-4deg); }
+  figure { margin: 0; border-radius: 10px; overflow: hidden; box-shadow: 0 30px 70px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.08); background: #000; }
+  figure canvas { display: block; width: 100%; }
+  figcaption { padding: 9px 12px; background: #242424; font-size: 17px; color: #e2e2e2; }
+  figcaption span { color: #8a8a8a; margin-left: 8px; }
+  #gl { position: absolute; left: -10000px; width: 640px; height: 360px; }
+</style></head>
+<body>
+<div class="mark"><b>22 effects</b><span>moved by your <em>hands</em></span></div>
+<div class="grid" id="grid"></div>
+<canvas id="gl"></canvas>
+<script src="RAW_JS/mh-gl.js"></script>
+<script src="RAW_JS/mh-fx.js"></script>
+<script>
+// A few effects over a synthetic scene with jelly hands, rendered by the real renderer.
+const PICK = [["edges", {}], ["kaleido", { 0: 0.4, 3: 0.6, 4: 0 }], ["halftone", {}], ["thermal", {}], ["tunnel", {}], ["ascii", { 2: 1 }], ["glitch", { 0: 0.6 }], ["reaction", {}]];
+const OPEN = [[0, 0], [-.07, -.04], [-.13, -.09], [-.17, -.15], [-.19, -.21], [-.07, -.21], [-.085, -.31], [-.09, -.37], [-.095, -.42],
+  [-.01, -.22], [-.01, -.33], [-.01, -.40], [-.01, -.45], [.05, -.205], [.06, -.30], [.065, -.36], [.07, -.41], [.10, -.18], [.12, -.25], [.13, -.29], [.14, -.33]];
+function hand(wx, wy, size, mirror, open, tilt) {
+  const pts = OPEN.map((p) => p.slice());
+  for (let f = 1; f <= 4; f++) if (!open[f]) {
+    const [mx, my] = OPEN[4 * f + 1], dx = OPEN[4 * f + 2][0] - mx;
+    pts[4 * f + 2] = [mx + dx * .5, my - .05]; pts[4 * f + 3] = [mx + dx * .3, my - .025]; pts[4 * f + 4] = [mx + dx * .1, my + .025];
+  }
+  const c = Math.cos(tilt), s = Math.sin(tilt);
+  return pts.map(([x, y]) => [wx + (x * c - y * s) * size * mirror / (16 / 9), wy + (x * s + y * c) * size]);
+}
+function scene() {
+  const c = document.createElement("canvas"); c.width = 1280; c.height = 720;
+  const g = c.getContext("2d"), sky = g.createLinearGradient(0, 0, 0, 720);
+  sky.addColorStop(0, "#1d1b4f"); sky.addColorStop(.55, "#b8457a"); sky.addColorStop(1, "#f4a259");
+  g.fillStyle = sky; g.fillRect(0, 0, 1280, 720);
+  for (let i = 0; i < 40; i++) {
+    const x = (i * 337) % 1280, y = (i * 211) % 420, r = 10 + (i * 17) % 50, b = g.createRadialGradient(x, y, 0, x, y, r);
+    b.addColorStop(0, `hsla(${(i * 47) % 360},90%,75%,.55)`); b.addColorStop(1, "hsla(0,0%,100%,0)");
+    g.fillStyle = b; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  }
+  g.fillStyle = "#14102a"; g.beginPath(); g.moveTo(0, 560);
+  for (let x = 0; x <= 1280; x += 40) g.lineTo(x, 520 - Math.sin(x * .01) * 40 - (x % 160 === 0 ? 70 : 0));
+  g.lineTo(1280, 720); g.lineTo(0, 720); g.fill();
+  const img = new Image(); img.src = c.toDataURL(); return img;
+}
+const img = scene();
+img.onload = () => {
+  const canvas = document.getElementById("gl"), r = MHGL.create(canvas);
+  r.setSource(img); r.options.brackets = false;
+  for (const [id, over] of PICK) {
+    const fx = MHFX.byId[id], p = fx.knobs.map((k) => k.def).concat([0, 0, 0, 0, 0, 0]).slice(0, 6);
+    for (const [k, v] of Object.entries(over)) p[+k] = v;
+    r.setFx([{ id, mix: 1, p }]);
+    const n = ["Feedback", "Simulation"].includes(fx.group) ? 90 : 3;
+    for (let i = 0; i < n; i++) {
+      const t = 2 + i / 15, lo = [false, true, true, false, false], ro = [false, true, Math.sin(t * 1.3) > 0, false, true];
+      r.setHands([{ pts: hand(.31 + Math.sin(t * .5) * .03, .97, 1.55, -1, lo, -.1), on: lo }, { pts: hand(.69, .95 + Math.cos(t * .7) * .03, 1.55, 1, ro, .08) , on: ro }]);
+      r.setExpr([.5, .3, .2, .1, .5, .5, .7, .5, .2, .55]);
+      r.render(t);
+    }
+    const fig = document.createElement("figure"), c = document.createElement("canvas");
+    c.width = 640; c.height = 360; c.getContext("2d").drawImage(canvas, 0, 0, 640, 360);
+    fig.appendChild(c);
+    fig.insertAdjacentHTML("beforeend", `<figcaption>${fx.name}<span>${fx.group}</span></figcaption>`);
+    document.getElementById("grid").appendChild(fig);
+  }
+};
+</script>
+</body></html>

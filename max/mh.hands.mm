@@ -355,15 +355,19 @@ static void mh_post(t_mh_hands* x, const std::string& selector, const std::strin
 
 // record 1 <x> <y> <w> <h>: record that part of the video window with Live's
 // sound; record 0: stop and save. reveal: show the last recording in Finder.
+static t_mh_hands* gRecordingDevice = nullptr;  // main thread: the device whose window is recorded
+
 static void mh_record(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
   const bool on = argc > 0 && atom_getlong(argv) != 0;
   if (on && argc >= 5) {
+    gRecordingDevice = x;
     mh::Recorder::shared().start("MidiHands Video", atom_getfloat(argv + 1), atom_getfloat(argv + 2),
                                  atom_getfloat(argv + 3), atom_getfloat(argv + 4), [x](bool ok, const std::string& msg) {
                                    if (ok) mh_post(x, "recording", "1");
                                    else mh_post(x, "recordfail", msg);
                                  });
   } else if (!on) {
+    if (gRecordingDevice == x) gRecordingDevice = nullptr;
     mh::Recorder::shared().stop([x](bool ok, const std::string& msg) {
       mh_post(x, "recording", "0");
       mh_post(x, ok ? "recorded" : "recordfail", msg);
@@ -593,6 +597,11 @@ static void mh_free(t_mh_hands* x) {
   {
     std::lock_guard<std::mutex> lock(gAliveMutex);
     gAlive.erase(x);
+  }
+  // Deleted while recording its video window: finish the file anyway.
+  if (gRecordingDevice == x) {
+    gRecordingDevice = nullptr;
+    mh::Recorder::shared().stop([](bool, const std::string&) {});
   }
   if (x->subscription) mh::CameraHub::shared().unsubscribe(x->subscription);  // no callbacks after this
   qelem_free(x->accessQelem);

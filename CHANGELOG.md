@@ -5,6 +5,21 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Added
+- FX page: four effect slots with 22 video effects (Film Grade, Gradient Map, Thermal, Neon
+  Edges, Glow, Halftone, ASCII, Mosaic, Kaleidoscope, Ripple, Liquid, RGB Split, Mirror,
+  Tunnel, Echo, RGB Trails, Time Warp, VHS, Glitch, CRT, Strobe, Reaction Diffusion). Every
+  knob and the mix can follow a hand movement, with an amount in either direction.
+- Hands drawn with WebGL: the original app's glossy *Jelly* look, *Lines* or off, in Live
+  colors or *Amber*; optional cues that show what each movement is doing.
+- Video window: the picture at full resolution in 16:9, 9:16, 1:1 or 4:5, resizable, and
+  fullscreen on any display.
+- Recording: the video window with Live's sound as an MP4 in Movies/MidiHands.
+
+### Changed
+- The camera picture is in color and as sharp as the window showing it (up to 1920 wide);
+  the Play page draws it with WebGL.
+
 ### Fixed
 - `install.sh` run from an unzipped release folder reported failure (exit code 1) although
   the install succeeded.

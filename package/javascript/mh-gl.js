@@ -648,5 +648,22 @@ void main() {
     return r;
   }
 
-  window.MHGL = { create, THEMES };
+  // A colorful synthetic picture for demos and README renderings (no camera).
+  function demoScene() {
+    const c = document.createElement("canvas"); c.width = 1280; c.height = 720;
+    const g = c.getContext("2d"), sky = g.createLinearGradient(0, 0, 0, 720);
+    sky.addColorStop(0, "#1d1b4f"); sky.addColorStop(0.55, "#b8457a"); sky.addColorStop(1, "#f4a259");
+    g.fillStyle = sky; g.fillRect(0, 0, 1280, 720);
+    for (let i = 0; i < 40; i++) {
+      const x = (i * 337) % 1280, y = (i * 211) % 420, r = 10 + (i * 17) % 50, b = g.createRadialGradient(x, y, 0, x, y, r);
+      b.addColorStop(0, `hsla(${(i * 47) % 360},90%,75%,.55)`); b.addColorStop(1, "hsla(0,0%,100%,0)");
+      g.fillStyle = b; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    }
+    g.fillStyle = "#14102a"; g.beginPath(); g.moveTo(0, 560);
+    for (let x = 0; x <= 1280; x += 40) g.lineTo(x, 520 - Math.sin(x * 0.01) * 40 - (x % 160 === 0 ? 70 : 0));
+    g.lineTo(1280, 720); g.lineTo(0, 720); g.fill();
+    return c.toDataURL();
+  }
+
+  window.MHGL = { create, THEMES, demoScene };
 })();

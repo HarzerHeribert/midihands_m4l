@@ -7,19 +7,25 @@
 **Play Ableton Live with your hands.** MidiHands is a Max for Live device that turns your
 camera into an instrument. Straighten a finger to play a note or a chord in your song's key;
 raise, pinch or tilt your hand to sweep a filter, open a reverb or ride any knob in Live.
+The same movements play 22 video effects, so your set comes with its own visualizer, ready
+to record for Instagram, TikTok or YouTube.
 
 [![Latest release](https://img.shields.io/github/v/release/HarzerHeribert/midihands_m4l?label=release&color=ffad56)](https://github.com/HarzerHeribert/midihands_m4l/releases/latest)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-3a3a3a)
 ![Ableton Live 12 with Max for Live](https://img.shields.io/badge/Ableton%20Live-12%20%2B%20Max%20for%20Live-3a3a3a)
 
 [Install](#install) · [Quick start](#quick-start) · [Play](#play-notes-and-chords) ·
-[Move](#move-parameters-with-your-hands) · [Tips](#tips-for-good-tracking) ·
+[Move](#move-parameters-with-your-hands) · [FX](#fx-a-visualizer-you-play) ·
+[Video and recording](#video-window-and-recording) · [Tips](#tips-for-good-tracking) ·
 [Troubleshooting](#troubleshooting)
 
 - **Plays in key.** Eight fingers, eight pads: single notes, chords, or a split with chords
   in one hand and melody in the other. Follows the key and scale of your Live Set.
 - **Moves anything.** Link hand height, sideways position, pinch, fist or tilt to any
   parameter in Live. One movement can drive many parameters, each with its own range and curve.
+- **Plays video, too.** 22 effects, from neon edges to kaleidoscopes and reaction
+  diffusion, moved by the same hand movements. Full screen on a projector, or recorded with
+  Live's sound in the format your platform wants.
 - **Feels immediate.** Hand tracking runs inside Live on Apple's Vision framework, a few
   milliseconds per frame on Apple silicon. No extra app, no virtual MIDI ports.
 - **Live-native.** Every setting is a Live parameter: saved with your Set, automatable,
@@ -99,6 +105,45 @@ curve, **Inv** to reverse the direction, an output range, and **✕** to remove 
 movement can drive several parameters at once, up to 16 links per device. Links are saved
 with your Set.
 
+## FX: a visualizer you play
+
+<p align="center"><img src="docs/images/effects.png" alt="Eight of the video effects: neon edges, kaleidoscope, halftone, thermal, tunnel, ASCII, glitch and reaction diffusion, each over hands drawn as glossy jelly shapes" width="100%"></p>
+
+The **FX** page turns the camera picture and your hands into a music video.
+
+1. Pick an effect in one of the four slots. They run top to bottom, so a *Glow* after
+   *Neon Edges* makes the edges shine. The effects come in six groups: Color, Stylize,
+   Distort, Feedback (echoes, trails, time warp), Glitch and Simulation.
+2. Under any knob, and under **Mix**, choose a hand movement, then drag the small bar
+   next to it: to the right the movement turns the knob up, to the left down. An orange dot
+   on the knob shows where your hand has moved it. Pinch to zoom a kaleidoscope, make a
+   fist to flash a strobe, raise your hand to bend a tunnel.
+3. Choose how hands are drawn: **Jelly** (the glossy look of the original midihands app),
+   **Lines** or **Off**, in Live's cyan and orange or in **Amber**. **Cues** draw what each
+   movement is doing right on your hands: the pinch distance, the height, the fist.
+
+Effects marked *Follow Hands* move their center to your hands. **Camera** sets how much of
+the camera picture shows: at 0 only the hands and effects remain, on black. Every FX
+control is a Live parameter too, so you can automate it or map it to a controller.
+
+## Video window and recording
+
+<p align="center"><img src="docs/images/video.png" alt="The MidiHands Video window in portrait format, hands drawn as jelly over a colorful picture" width="100%"></p>
+
+Click **Video window** on the FX page for the picture in its own window, at full
+resolution. Resize it freely; the picture keeps its format: **16:9** for YouTube and
+screens, **9:16** for Reels, Stories and TikTok, **1:1** or **4:5** for feed posts.
+**Fullscreen** fills the display the window is on, for a projector or a second screen; Esc
+leaves it.
+
+Click **● Rec**, in the window or on the FX page, to record the picture with Live's sound.
+The video is saved as an MP4 (H.264 and AAC) in *Movies/MidiHands*, ready to upload. In
+the video window, R starts and stops a recording and F shows the last one in Finder.
+
+The first time you record, macOS asks whether Ableton Live may record the screen and system
+audio. Allow it in System Settings > Privacy & Security > Screen & System Audio Recording,
+then restart Live.
+
 ## Tips for good tracking
 
 - **Light matters most.** Many webcams halve their frame rate in dim rooms (30 → 15 fps),
@@ -141,6 +186,10 @@ them without the download flag.
 MidiHands on the same track, and that the editor's fingertip labels light up when you
 straighten a finger. Hands should face the camera.
 
+**Recording failed.** Allow Ableton Live in System Settings > Privacy & Security > Screen &
+System Audio Recording and restart Live. The video window must be open and on screen
+while it records; it may be behind other windows, but not minimized.
+
 **Files disappear after a while.** If your Documents folder is in iCloud Drive with "Optimize
 Mac Storage", macOS may remove local copies of `Documents/Max 9/Packages`. Keep that folder
 downloaded, or run the install command again.
@@ -156,8 +205,9 @@ changes. Read it first if you like: [scripts/install.sh](scripts/install.sh).
 ## Privacy
 
 Hand tracking runs entirely on your Mac. The camera picture is only shown in the device's
-own editor, over the computer's internal network interface (127.0.0.1). The only internet
-access is the update check and download from GitHub.
+own windows, over the computer's internal network interface (127.0.0.1). Recordings are
+saved only to *Movies/MidiHands* on your Mac. The only internet access is the update check
+and download from GitHub.
 
 ## Uninstall
 
