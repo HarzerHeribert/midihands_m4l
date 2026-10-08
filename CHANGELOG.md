@@ -5,6 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+## [0.3.0-beta.2] - 2026-10-08
+
 ### Removed
 - The video window's Fullscreen button. Hiding the window's title bar made the picture go
   black and stay black (the embedded browser view does not survive Max rebuilding the
