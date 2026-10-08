@@ -17,7 +17,7 @@ sed -i '' "s/\"version\" : \"[^\"]*\"/\"version\" : \"$v\"/" package/package-inf
 perl -pi -e "s/^## \\[Unreleased\\]\$/## [Unreleased]\n\n## [$v] - $(date +%Y-%m-%d)/" CHANGELOG.md
 
 make dist
-git add VERSION package/package-info.json CHANGELOG.md device/MidiHands.amxd
+git add VERSION package/package-info.json CHANGELOG.md device/MidiHands.amxd "device/MidiHands Audio.amxd"
 git commit -m "release: v$v"
 git tag -a "v$v" -m "MidiHands $v"
 echo "Ready. Publish with: git push origin main v$v"
