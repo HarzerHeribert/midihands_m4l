@@ -19,8 +19,10 @@ To try the release build without publishing, run the Release workflow by hand
 (Actions > Release > Run workflow): it uploads the zip as a build artifact instead.
 
 Versions: patch (0.1.1) for fixes, minor (0.2.0) for new features, major once settings or
-saved Sets would break. A suffix (`scripts/release.sh 0.3.0-beta.1`) makes a GitHub
-pre-release: testers install it with the version's own link
-(`irm https://github.com/HarzerHeribert/midihands_m4l/releases/download/v0.3.0-beta.1/install.ps1 | iex`,
-or `curl -fsSL .../download/v0.3.0-beta.1/install.sh | bash`), while `releases/latest`, the
-install commands in the README and the Update button stay on the last real release.
+saved Sets would break.
+
+Publish normal releases only. A suffix (`scripts/release.sh 0.3.0-beta.1`) still makes a
+GitHub pre-release, but GitHub's "latest" skips pre-releases, so the Update button never
+offers one and its testers never get offered the next beta either (tried with
+0.3.0-beta.1/2, and it was a mess). Something new and less tested, like Windows in 0.3.0,
+ships in a normal release and is called "beta" in the README and the release notes.

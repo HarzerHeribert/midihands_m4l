@@ -62,7 +62,8 @@ Read README.md first.
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
 - Work on `main`; this is a solo project. The owner alone decides what is merged.
 - The version lives in `VERSION` (compiled in as `MH_VERSION`, see `core/version.hpp`);
-  releases follow RELEASING.md (`scripts/release.sh`, tag push, Release workflow). Keep
+  releases follow RELEASING.md (`scripts/release.sh`, tag push, Release workflow; normal
+  releases only, no pre-releases: the Update button cannot reach them). Keep
   `CHANGELOG.md` `[Unreleased]` up to date with user-visible changes.
 - `scripts/install.sh` (macOS) and `scripts/install.ps1` (Windows) are what users and the
   device's Update button run: keep them working both from an unzipped release folder and

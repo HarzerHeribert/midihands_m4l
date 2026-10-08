@@ -5,6 +5,22 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+The first normal release with the Windows version; it collects 0.3.0-beta.1 and beta.2.
+
+### Added
+- Windows version (beta): the same devices, editor and effects, with hand tracking on
+  Google's MediaPipe hand models instead of Apple Vision. Install with PowerShell:
+  `irm https://github.com/HarzerHeribert/midihands_m4l/releases/latest/download/install.ps1 | iex`.
+  Recording the video window is macOS only for now.
+
+### Changed
+- The Update button now works the same on macOS and Windows: from here on every release is a
+  normal one, and testers of the 0.3.0 betas are offered 0.3.0.
+
+### Removed
+- The video window's Fullscreen button (it turned the picture black); drag the window to a
+  display and resize it instead.
+
 ## [0.3.0-beta.2] - 2026-10-08
 
 ### Removed
