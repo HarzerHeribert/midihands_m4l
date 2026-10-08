@@ -671,9 +671,11 @@ void main() {
   const SLOTS = 4;
 
   // The chain from Live parameter values (P, as the device stores them) and the
-  // ten hand movements: x<s>fx is 1 + the effect's index (0 = none), x<s>mix and
+  // modulation sources: x<s>fx is 1 + the effect's index (0 = none), x<s>mix and
   // x<s>p<k> are 0..1, and every control j (0 = mix, 1..6 = knobs) can be moved
-  // by a movement x<s>m<j>s (1..10, 0 = none) times x<s>m<j>a (-1..1).
+  // by a source x<s>m<j>s (0 = none) times x<s>m<j>a (-1..1). Sources (`values`):
+  // 1..10 the hand movements, then MidiHands Audio letters A..H x level, bass,
+  // mid, high, beat (11..50), as the generator's MOD_SOURCES.
   function modulated(P, expr, s, j, base) {
     const src = P[`x${s}m${j}s`] | 0;
     if (!src) return base;
@@ -692,15 +694,18 @@ void main() {
     }
     return out;
   }
-  // Movements that drive effects (expression indices), for the gesture cues.
+  // Hand movements that drive effects (expression indices), for the gesture cues.
   function sources(P) {
     const used = new Set();
     for (let s = 0; s < SLOTS; s++) {
       if (!(P[`x${s}fx`] | 0)) continue;
-      for (let j = 0; j < 7; j++) { const src = P[`x${s}m${j}s`] | 0; if (src) used.add(src - 1); }
+      for (let j = 0; j < 7; j++) { const src = P[`x${s}m${j}s`] | 0; if (src && src <= HAND_SOURCES) used.add(src - 1); }
     }
     return used;
   }
+  const HAND_SOURCES = 10, AUDIO_LETTERS = "ABCDEFGH", AUDIO_FEATURES = ["Level", "Bass", "Mid", "High", "Beat"];
+  // Modulation source index for letter c (0..7) and feature f (0..4).
+  const audioSource = (c, f) => HAND_SOURCES + 1 + c * AUDIO_FEATURES.length + f;
   const FORMATS = [16 / 9, 9 / 16, 1, 4 / 5];
-  window.MHFX = { list, byId, GROUPS, SLOTS, FORMATS, slots, sources, modulated };
+  window.MHFX = { list, byId, GROUPS, SLOTS, FORMATS, slots, sources, modulated, HAND_SOURCES, AUDIO_LETTERS, AUDIO_FEATURES, audioSource };
 })();

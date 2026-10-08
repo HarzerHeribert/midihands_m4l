@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generates MidiHands.amxd, the Max for Live MIDI effect.
+"""Generates MidiHands.amxd, the Max for Live MIDI effect, and its companion
+"MidiHands Audio.amxd", an audio effect that sends a track's sound to it.
 
 The patch is described in code so changes are reviewable in git. Run
 `make device` (or this script) after editing; open the result in Live.
@@ -23,6 +24,11 @@ replaces the "---" prefix with an id unique to each device instance:
   ---mh_move     Movement switch (0/1), gates map slots and CC out
   ---mh_notes_set, ---mh_move_set   the page flips a strip switch
   ---mh_strip_report                the page opened: strip switches resend
+  ---mh_audio    sound values for the pages (from every MidiHands Audio, via mh-audio-hub.js)
+
+Every MidiHands Audio device sends on the global name mh_audio (no "---":
+all devices in the Set hear it): "v <letter> <level bass mid high beat>"
+about 60 times a second and "n <letter> <id> <track name>" every second.
 """
 from __future__ import annotations
 
@@ -42,6 +48,11 @@ LINKS = 16  # movement -> Live parameter links; any number may share a movement
 FX_SLOTS = 4  # video effect chain length; each slot: effect, mix, six knobs, a modulation per control
 VIDEO_SIZE = (960.0, 540.0)
 FORMATS = ["16:9", "9:16", "1:1", "4:5"]
+AUDIO_LETTERS = "ABCDEFGH"  # MidiHands Audio devices send as one of these
+AUDIO_FEATURES = ["Level", "Bass", "Mid", "High", "Beat"]  # order = core/audio.hpp AudioFeatures
+# Modulation sources: none, the ten hand movements, then letter x feature (append only:
+# Sets store the index).
+MOD_SOURCES = ["None"] + EXPRESSIONS + [f"{l} {f}" for l in AUDIO_LETTERS for f in AUDIO_FEATURES]
 
 
 def effect_names() -> list[str]:
@@ -66,6 +77,8 @@ PORTS = {
     "expr": (2, 1, [""]), "change": (1, 3, ["", "int", "int"]), "thispatcher": (1, 2, ["", ""]),
     "onebang": (2, 2, ["bang", "bang"]), "absolutepath": (1, 1, [""]),
     "v8": (1, 1, [""]), "metro": (2, 1, ["bang"]), "delay": (2, 1, ["bang"]),
+    "plugin~": (2, 2, ["signal", "signal"]), "plugout~": (2, 0, []),
+    "mh.audio~": (2, 2, ["", ""]),
 }
 
 
@@ -249,7 +262,7 @@ def stored_params() -> list[tuple]:
         for j in range(7):  # 0 = mix, 1..6 = knobs
             what = "Mix" if j == 0 else f"Knob {j}"
             params += [
-                (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, 10, 0, 1, ["None"] + EXPRESSIONS),
+                (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, len(MOD_SOURCES) - 1, 0, 1, MOD_SOURCES),
                 (f"x{s}m{j}a", f"FX{n} {what} Mod Amount", "float", -1, 1, 0.5, 1, None),
             ]
     return params
@@ -295,7 +308,7 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(read, 0, ui)
 
     # Live data into the page.
-    for i, name in enumerate(("r ---mh_view", "r ---mh_info")):
+    for i, name in enumerate(("r ---mh_view", "r ---mh_info", "r ---mh_audio")):
         src = e.obj(name, 340 + 120 * i, 200)
         e.connect(src, 0, ui)
     expr_in = e.obj("r ---mh_expr", 600, 200)
@@ -622,7 +635,8 @@ def build_video() -> dict:
     opened = v.obj("r ---mh_vopen", 400, 20)
     steps = v.obj("t b b", 400, 50)
     v.connect(opened, 0, steps)
-    flags = v.msg("window flags grow, window flags zoom, window flags nofloat, window exec", 400, 80)
+    # Floating like the editor, so Live's window never hides it.
+    flags = v.msg("window flags grow, window flags zoom, window flags float, window exec", 400, 80)
     v.connect(steps, 1, flags)
     v.connect(flags, 0, tp)
     once = v.obj("onebang 1", 620, 80)
@@ -636,17 +650,20 @@ def build_video() -> dict:
     v.connect(read, 0, ui)
     # Pcontrol "open" arrives through the inlet; nothing else to do with it.
 
-    for i, name in enumerate(("r ---mh_view", "r ---mh_info", "r ---mh_page", "r ---mh_param", "r ---mh_vreq")):
+    for i, name in enumerate(("r ---mh_view", "r ---mh_info", "r ---mh_page", "r ---mh_param", "r ---mh_vreq", "r ---mh_audio")):
         v.connect(v.obj(name, 20 + 110 * i, 220), 0, ui)
     expr_in = v.obj("r ---mh_expr", 580, 220)
     expr_msg = v.obj("prepend expr", 580, 250)
     v.connect(expr_in, 0, expr_msg)
     v.connect(expr_msg, 0, ui)
 
-    # Page commands: fullscreen here, everything else to the editor patch.
-    cmds = v.obj("route fullscreen", 20, 530)
+    # Page commands: fullscreen and place here, everything else to the editor patch.
+    cmds = v.obj("route fullscreen place", 20, 530)
     v.connect(ui, 0, cmds)
-    v.connect(cmds, 1, v.obj("s ---mh_vcmd", 160, 560))
+    v.connect(cmds, 2, v.obj("s ---mh_vcmd", 160, 560))
+    place = v.msg("window size $1 $2 $3 $4, window exec", 500, 560)
+    v.connect(cmds, 1, place)
+    v.connect(place, 0, tp)
     full = v.obj("route 1 0", 20, 560)
     v.connect(cmds, 0, full)
     # Window rectangle (left top right bottom), polled to keep the page filling the window.
@@ -815,6 +832,11 @@ def build() -> dict:
     opened = p.obj("s ---mh_open", 300, 120)
     p.connect(open_button, 0, opened)
 
+    # Sound from MidiHands Audio devices anywhere in the Set, for the effects.
+    hub = p.obj("v8 mh-audio-hub.js", 600, 300)
+    p.connect(p.obj("r mh_audio", 600, 270), 0, hub)
+    p.connect(hub, 0, p.obj("s ---mh_audio", 600, 330))
+
     params = {**p.params, **editor.params, "inherited_shortname": 1}
     patcher = p.patcher([40.0, 80.0, 1500.0, 700.0], openrect=[0.0, 0.0, 0.0, 169.0],
                         description=f"MidiHands {VERSION}: camera hand tracking to MIDI", title="MidiHands",
@@ -831,9 +853,107 @@ def build() -> dict:
     return {"patcher": patcher}
 
 
-def write_amxd(patch: dict, path: Path) -> None:
+def build_audio() -> dict:
+    """MidiHands Audio: an audio effect that passes its track's sound through
+    unchanged and sends level, bass, mid, high and beat to every MidiHands
+    device as one of eight letters, for the video effects."""
+    Patch._n = 0
+    p = Patch()
+    W = 330.0
+
+    pin = p.obj("plugin~", 20, 20)
+    pout = p.obj("plugout~", 20, 300)
+    p.connect(pin, 0, pout)
+    p.connect(pin, 1, pout, 1)
+    analysis = p.obj("mh.audio~", 120, 200)
+    p.connect(pin, 0, analysis)
+    p.connect(pin, 1, analysis, 1)
+    p.connect(analysis, 0, p.obj("s mh_audio", 120, 240))
+
+    # Letter this device sends as, and its meters.
+    p.label("Sends as", [8.0, 4.0, 60.0, 14.0], 9.0)
+    letter = p.tab("Letter", "Letter", list(AUDIO_LETTERS), 0, [8.0, 18.0, 168.0, 17.0], 300, 20)
+    channel = p.obj("prepend channel", 300, 50)
+    p.connect(letter, 0, channel)
+    p.connect(channel, 0, analysis)
+    meters = p._add({
+        "maxclass": "multislider", "numinlets": 1, "numoutlets": 2, "outlettype": ["", ""],
+        "parameter_enable": 0, "size": 5, "setminmax": [0.0, 1.0], "setstyle": 1, "thickness": 4,
+        "slidercolor": [1.0, 0.68, 0.34, 1.0], "candicane2": [1.0, 0.68, 0.34, 1.0],
+        "bgcolor": [0.10, 0.10, 0.10, 1.0], "ignoreclick": 1, "spacing": 4,
+        "patching_rect": [120, 280, 168, 70], "presentation": 1, "presentation_rect": [8.0, 42.0, 168.0, 72.0],
+    })
+    p.connect(analysis, 1, meters)
+    for i, name in enumerate(AUDIO_FEATURES):
+        p.label(name, [8.0 + i * 34.0, 115.0, 34.0, 14.0], 9.0)
+    name_label = p._add({
+        "maxclass": "live.comment", "text": "", "numinlets": 1, "numoutlets": 0, "fontsize": 9.0,
+        "patching_rect": [520, 200, 168, 18], "presentation": 1, "presentation_rect": [8.0, 134.0, 168.0, 16.0],
+        "textjustification": 0,
+    })
+
+    # Settings, right column.
+    x = 186.0
+    controls = [
+        ("Gain", "gain", lambda r, xx, yy: p.dial("Gain", "Gain", -24, 24, 0, 4, r, xx, yy)),
+        ("Smooth", "smooth", lambda r, xx, yy: p.dial("Smooth", "Smooth", 20, 1000, 120, 2, r, xx, yy)),
+        ("Beat Sensitivity", "sensitivity", lambda r, xx, yy: p.dial("Beat Sensitivity", "Beat Sens", 0, 100, 50, 5, r, xx, yy)),
+        ("Beat Decay", "decay", lambda r, xx, yy: p.dial("Beat Decay", "Decay", 50, 1500, 250, 2, r, xx, yy)),
+    ]
+    for i, (_, msg, make) in enumerate(controls):
+        rect = [x + (i % 2) * 70.0, 4.0 + (i // 2) * 56.0, 64.0, 52.0]
+        dial = make(rect, 500 + 110 * i, 20)
+        src = dial
+        if msg == "sensitivity":
+            src = p.obj("/ 100.", 500 + 110 * i, 50)
+            p.connect(dial, 0, src)
+        prep = p.obj(f"prepend {msg}", 500 + 110 * i, 80)
+        p.connect(src, 0, prep)
+        p.connect(prep, 0, analysis)
+    auto = p.toggle_text("Auto Level", "Auto Level", "Auto Level", 1, [x, 124.0, 134.0, 18.0], 950, 20)
+    auto_prep = p.obj("prepend autolevel", 950, 50)
+    p.connect(auto, 0, auto_prep)
+    p.connect(auto_prep, 0, analysis)
+
+    # The track's name, followed live, so MidiHands can list "A · Kick".
+    device = p.obj("live.thisdevice", 520, 120)
+    path_msg = p.msg("path this_device canonical_parent", 520, 145)
+    p.connect(device, 0, path_msg)
+    lpath = p.obj("live.path", 520, 170)
+    p.connect(path_msg, 0, lpath)
+    observer = p.obj("live.observer", 520, 230)
+    prop = p.msg("property name", 640, 200)
+    wire = p.obj("t l b", 520, 200)
+    p.connect(lpath, 0, wire)
+    p.connect(wire, 1, prop)
+    p.connect(prop, 0, observer)
+    p.connect(wire, 0, observer, 1)
+    name_prep = p.obj("prepend name", 520, 260)
+    p.connect(observer, 0, name_prep)
+    p.connect(name_prep, 0, analysis)
+    label_prep = p.obj("prepend set", 640, 260)
+    p.connect(observer, 0, label_prep)
+    p.connect(label_prep, 0, name_label)
+
+    patcher = p.patcher([40.0, 80.0, 1200.0, 600.0], openrect=[0.0, 0.0, W, 169.0],
+                        description=f"MidiHands Audio {VERSION}: this track's sound for MidiHands' video effects",
+                        title="MidiHands Audio", parameters={**p.params, "inherited_shortname": 1},
+                        dependency_cache=[], latency=0, autosave=0, devicewidth=W,
+                        project={
+                            "version": 1, "creationdate": 3590052786, "modificationdate": 3590052786,
+                            "viewrect": [0.0, 0.0, 300.0, 500.0], "autoorganize": 1, "hideprojectwindow": 1,
+                            "showdependencies": 1, "autolocalize": 0, "contents": {"patchers": {}},
+                            "layout": {}, "searchpath": {}, "detailsvisible": 0,
+                            "amxdtype": 1633771873,  # 'aaaa', audio effect
+                            "readonly": 0, "devpathtype": 0, "devpath": ".", "sortmode": 0, "viewmode": 0,
+                        })
+    return {"patcher": patcher}
+
+
+def write_amxd(patch: dict, path: Path, kind: bytes = b"mmmm") -> None:
+    """kind: b"mmmm" MIDI effect, b"aaaa" audio effect."""
     data = json.dumps(patch, indent="\t").encode("utf-8") + b"\n\x00"
-    header = b"ampf" + struct.pack("<I", 4) + b"mmmm"  # mmmm = MIDI effect
+    header = b"ampf" + struct.pack("<I", 4) + kind
     meta = b"meta" + struct.pack("<I", 4) + b"\x00\x00\x00\x00"
     ptch = b"ptch" + struct.pack("<I", len(data)) + data
     path.write_bytes(header + meta + ptch)
@@ -843,3 +963,6 @@ if __name__ == "__main__":
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).with_name("MidiHands.amxd")
     write_amxd(build(), out)
     print(f"wrote {out}")
+    audio_out = out.with_name("MidiHands Audio.amxd")
+    write_amxd(build_audio(), audio_out, b"aaaa")
+    print(f"wrote {audio_out}")

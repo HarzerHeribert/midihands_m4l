@@ -5,9 +5,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleExecutable</key>
-	<string>mh.hands</string>
+	<string>@NAME@</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.midihands.mh.hands</string>
+	<string>com.midihands.@ID@</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>

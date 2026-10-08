@@ -12,7 +12,8 @@
 #   --yes             don't ask anything (used by the device's Update button)
 #
 # What it does: copies the Max package to ~/Documents/Max 9/Packages/midihands and the
-# device to your User Library (Presets > MIDI Effects > Max MIDI Effect). Nothing else.
+# devices to your User Library (MidiHands in Presets > MIDI Effects > Max MIDI Effect,
+# MidiHands Audio in Presets > Audio Effects > Max Audio Effect). Nothing else.
 set -euo pipefail
 
 REPO="HarzerHeribert/midihands_m4l"
@@ -56,6 +57,8 @@ if [ -n "$library_cfg" ]; then
   [ -n "$ul_path" ] && [ -n "$ul_name" ] && [ -d "$ul_path/$ul_name" ] && user_library="$ul_path/$ul_name"
 fi
 device_dir="$user_library/Presets/MIDI Effects/Max MIDI Effect"
+audio_dir="$user_library/Presets/Audio Effects/Max Audio Effect"
+audio_device="MidiHands Audio.amxd"
 
 if [ -L "$package_dest" ] && [ "$force" -eq 0 ]; then
   fail "a development install is linked at $package_dest (from 'make install'). Update it with git pull && make, or rerun with --force to replace it with the release."
@@ -96,6 +99,7 @@ if [ "$yes" -eq 0 ] && [ -t 0 ]; then
   say "Install MidiHands $new_version${old_version:+ (replacing $old_version)}:"
   say "  Max package: $package_dest"
   say "  Device:      $device_dir/MidiHands.amxd"
+  [ -f "$src/$audio_device" ] && say "  Device:      $audio_dir/$audio_device"
   printf 'Continue? [Y/n] '
   read -r answer
   case "$answer" in [nN]*) say "Nothing changed."; exit 0 ;; esac
@@ -113,6 +117,12 @@ xattr -dr com.apple.quarantine "$package_dest" 2>/dev/null || true
 rm -f "$device_dir/MidiHands.amxd"
 cp "$src/MidiHands.amxd" "$device_dir/MidiHands.amxd"
 xattr -d com.apple.quarantine "$device_dir/MidiHands.amxd" 2>/dev/null || true
+if [ -f "$src/$audio_device" ]; then  # since 0.2.0
+  mkdir -p "$audio_dir"
+  rm -f "$audio_dir/$audio_device"
+  cp "$src/$audio_device" "$audio_dir/$audio_device"
+  xattr -d com.apple.quarantine "$audio_dir/$audio_device" 2>/dev/null || true
+fi
 
 say "MidiHands $new_version installed."
 if pgrep -xq Live; then
@@ -120,3 +130,6 @@ if pgrep -xq Live; then
 fi
 say "In Live's browser: User Library > Presets > MIDI Effects > Max MIDI Effect > MidiHands"
 say "(or search for MidiHands), drop it on a MIDI track before an instrument, and switch the camera on."
+if [ -f "$src/$audio_device" ]; then
+  say "For effects that follow the music: MidiHands Audio (Audio Effects > Max Audio Effect) on any track."
+fi

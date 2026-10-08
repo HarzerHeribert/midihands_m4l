@@ -15,6 +15,9 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 - Video window: the picture at full resolution in 16:9, 9:16, 1:1 or 4:5, resizable, and
   fullscreen on any display.
 - Recording: the video window with Live's sound as an MP4 in Movies/MidiHands.
+- MidiHands Audio, a companion audio effect installed alongside: on any track (or Main) it
+  sends that track's level, bass, mid, high and a beat pulse to MidiHands, as one of eight
+  letters, so effects can follow the music. Several can feed one MidiHands.
 
 ### Changed
 - The camera picture is in color and as sharp as the window showing it (up to 1920 wide);

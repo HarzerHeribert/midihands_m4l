@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../core/assign.hpp"
+#include "../core/audio.hpp"
 #include "../core/engine.hpp"
 #include "../core/features.hpp"
 #include "../core/filters.hpp"
@@ -364,6 +365,116 @@ TEST(custom_finger_slots_play_what_they_say) {
   const auto open = makeHand(0.7f, 0.5f, kOpen);
   Output o = engine.process(frameWith(0.0, nullptr, &open));
   CHECK(count(o.midi, 0x90) == 3 + 0 + 1 + 1);  // chord + off + note + pinky note
+}
+
+// ---- audio features (MidiHands Audio) ---------------------------------------------
+
+namespace {
+constexpr double kSr = 48000.0;
+constexpr double kTau = 6.283185307179586;
+
+// Feeds `seconds` of a generated mono signal in 512-sample blocks, like Live would.
+void feed(AudioAnalyzer& a, double seconds, const std::function<float(double)>& signal, double& t) {
+  std::vector<float> block(512);
+  const int total = int(seconds * kSr);
+  for (int done = 0; done < total; done += 512) {
+    const int n = std::min(512, total - done);
+    for (int i = 0; i < n; ++i, t += 1.0 / kSr) block[i] = signal(t);
+    a.process(block.data(), static_cast<const float*>(nullptr), n);
+  }
+}
+}  // namespace
+
+TEST(audio_silence_is_zero) {
+  AudioAnalyzer a;
+  a.setSampleRate(kSr);
+  double t = 0;
+  feed(a, 1.0, [](double) { return 0.f; }, t);
+  const auto f = a.features();
+  CHECK(f.level == 0.f && f.bass == 0.f && f.mid == 0.f && f.high == 0.f && f.beat == 0.f);
+  CHECK(a.beats() == 0);
+}
+
+TEST(audio_bands_follow_frequency) {
+  AudioAnalyzer low, high;
+  low.setSampleRate(kSr);
+  high.setSampleRate(kSr);
+  double t1 = 0, t2 = 0;
+  feed(low, 1.5, [](double t) { return 0.5f * float(std::sin(kTau * 70.0 * t)); }, t1);
+  feed(high, 1.5, [](double t) { return 0.5f * float(std::sin(kTau * 6000.0 * t)); }, t2);
+  const auto l = low.features(), h = high.features();
+  CHECK(l.level > 0.9f);
+  CHECK(l.bass > 0.9f);
+  CHECK(l.high < 0.05f);
+  CHECK(l.mid < l.bass - 0.3f);
+  CHECK(h.high > 0.9f);
+  CHECK(h.bass < 0.05f);
+}
+
+TEST(audio_beats_on_kicks) {
+  // A kick-like burst (60 Hz, 80 ms decay) every 500 ms for 4 s: 8 hits.
+  AudioAnalyzer a;
+  a.setSampleRate(kSr);
+  double t = 0;
+  std::vector<double> hitTimes;
+  float lastPulse = 0.f;
+  for (int block = 0; block < int(4.0 * kSr / 512); ++block) {
+    feed(a, 512 / kSr, [](double t) {
+      const double local = std::fmod(t, 0.5);
+      return float(0.8 * std::exp(-local / 0.08) * std::sin(kTau * 60.0 * local));
+    }, t);
+    if (a.features().beat > lastPulse + 0.5f) hitTimes.push_back(t);
+    lastPulse = a.features().beat;
+  }
+  CHECK(a.beats() == 8);
+  CHECK(hitTimes.size() == 8);
+  for (size_t i = 0; i < hitTimes.size(); ++i) CHECK(std::fabs(hitTimes[i] - 0.5 * double(i)) < 0.03);
+}
+
+TEST(audio_beats_over_bass_and_noise) {
+  // Kicks every 500 ms over a held bass note and hats-like noise, as in a mix.
+  AudioAnalyzer a;
+  a.setSampleRate(kSr);
+  double t = 0;
+  unsigned seed = 7;
+  feed(a, 8.0, [&seed](double t) {
+    seed = seed * 1664525u + 1013904223u;
+    const double local = std::fmod(t, 0.5);
+    const double kick = 0.6 * std::exp(-local / 0.08) * std::sin(kTau * 55.0 * local);
+    return float(kick + 0.2 * std::sin(kTau * 82.0 * t) + 0.1 * (double(seed >> 8) / 8388608.0 - 1.0));
+  }, t);
+  CHECK(a.beats() == 16);
+}
+
+TEST(audio_no_beats_in_steady_noise) {
+  AudioAnalyzer a;
+  a.setSampleRate(kSr);
+  double t = 0;
+  unsigned seed = 12345;
+  auto noise = [&seed](double) { seed = seed * 1664525u + 1013904223u; return 0.3f * (float(seed >> 8) / 8388608.f - 1.f); };
+  feed(a, 0.5, noise, t);
+  const int afterStart = a.beats();  // the noise starting may count once
+  feed(a, 3.0, noise, t);
+  CHECK(afterStart <= 1);
+  CHECK(a.beats() - afterStart == 0);
+}
+
+TEST(audio_auto_level_fills_range) {
+  // Quiet and loud material both reach the top; without auto level the quiet one stays low.
+  for (const bool autoLevel : {true, false}) {
+    AudioAnalyzer quiet, loud;
+    AudioSettings s;
+    s.autoLevel = autoLevel;
+    for (AudioAnalyzer* a : {&quiet, &loud}) {
+      a->setSampleRate(kSr);
+      a->setSettings(s);
+    }
+    double t1 = 0, t2 = 0;
+    feed(quiet, 2.0, [](double t) { return 0.02f * float(std::sin(kTau * 220.0 * t)); }, t1);
+    feed(loud, 2.0, [](double t) { return 0.7f * float(std::sin(kTau * 220.0 * t)); }, t2);
+    if (autoLevel) CHECK(std::fabs(quiet.features().level - loud.features().level) < 0.1f);
+    else CHECK(quiet.features().level < loud.features().level - 0.5f);
+  }
 }
 
 int main() {

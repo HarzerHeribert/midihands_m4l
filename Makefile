@@ -26,9 +26,13 @@ MAC_HDR  := mac/tracker.hpp mac/camera_hub.hpp mac/preview_server.hpp mac/update
 
 PACKAGE  := package
 EXTERNAL := $(PACKAGE)/externals/mh.hands.mxo
+AUDIO_EXTERNAL := $(PACKAGE)/externals/mh.audio~.mxo
+# MSP functions mh.audio~ uses, resolved by Max at load time like the Max API itself.
+MSP_LINK := -Wl,-U,_z_dsp_setup -Wl,-U,_z_dsp_free -Wl,-U,_class_dspinit
 MAX_PACKAGES := $(HOME)/Documents/Max 9/Packages
 USER_LIBRARY ?= $(HOME)/Music/Ableton/User Library
 DEVICE_DIR   := $(USER_LIBRARY)/Presets/MIDI Effects/Max MIDI Effect
+AUDIO_DEVICE_DIR := $(USER_LIBRARY)/Presets/Audio Effects/Max Audio Effect
 
 DIST     := dist/MidiHands-$(VERSION)
 
@@ -36,7 +40,7 @@ DIST     := dist/MidiHands-$(VERSION)
 
 all: external cli test device
 
-external: $(EXTERNAL)/Contents/MacOS/mh.hands
+external: $(EXTERNAL)/Contents/MacOS/mh.hands $(AUDIO_EXTERNAL)/Contents/MacOS/mh.audio~
 cli: build/mh
 device: device/MidiHands.amxd
 
@@ -45,9 +49,17 @@ $(EXTERNAL)/Contents/MacOS/mh.hands: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HD
 	$(CXX) $(CXXFLAGS) $(OBJCFLAGS) $(ARCHS) -Wno-cast-function-type-mismatch -I$(SDK) -DMAC_VERSION \
 		-bundle -o $@ $(CORE_SRC) $(MAC_SRC) max/mh.hands.mm $(FRAMEWORKS) @$(SDK)/c74_linker_flags.txt
 
-	sed 's/@VERSION@/$(VERSION)/g' max/Info.plist > $(EXTERNAL)/Contents/Info.plist
+	sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@NAME@/mh.hands/g' -e 's/@ID@/mh.hands/g' max/Info.plist > $(EXTERNAL)/Contents/Info.plist
 	printf 'iLaX????' > $(EXTERNAL)/Contents/PkgInfo
 	codesign --force --sign - $(EXTERNAL)
+
+$(AUDIO_EXTERNAL)/Contents/MacOS/mh.audio~: core/audio.cpp core/audio.hpp max/mh.audio~.cpp max/Info.plist VERSION
+	@mkdir -p $(AUDIO_EXTERNAL)/Contents/MacOS
+	$(CXX) $(CXXFLAGS) -mmacosx-version-min=$(MACOS_MIN) $(ARCHS) -Wno-cast-function-type-mismatch -I$(SDK) -I$(SDK)/../msp-includes -DMAC_VERSION \
+		-bundle -o $@ core/audio.cpp max/mh.audio~.cpp @$(SDK)/c74_linker_flags.txt $(MSP_LINK)
+	sed -e 's/@VERSION@/$(VERSION)/g' -e 's/@NAME@/mh.audio~/g' -e 's/@ID@/mh.audio/g' max/Info.plist > $(AUDIO_EXTERNAL)/Contents/Info.plist
+	printf 'iLaX????' > $(AUDIO_EXTERNAL)/Contents/PkgInfo
+	codesign --force --sign - $(AUDIO_EXTERNAL)
 
 build/mh: $(CORE_SRC) $(CORE_HDR) $(MAC_SRC) $(MAC_HDR) tools/mh.mm VERSION
 	@mkdir -p build
@@ -63,17 +75,20 @@ test: build/test_core
 device/MidiHands.amxd: device/build_device.py VERSION
 	python3 device/build_device.py
 
-# Development install: Max uses this checkout's package, Live's browser this device file.
+# Development install: Max uses this checkout's package, Live's browser these device files.
+# (build_device.py writes both devices; the rule names the first.)
 install: external device
 	@mkdir -p "$(MAX_PACKAGES)" "$(DEVICE_DIR)"
 	@if [ -d "$(MAX_PACKAGES)/midihands" ] && [ ! -L "$(MAX_PACKAGES)/midihands" ]; then \
 		rm -rf "$(MAX_PACKAGES)/midihands"; echo "Replaced the installed release with this checkout"; fi
 	ln -sfn "$(CURDIR)/$(PACKAGE)" "$(MAX_PACKAGES)/midihands"
 	ln -f device/MidiHands.amxd "$(DEVICE_DIR)/MidiHands.amxd"
+	@mkdir -p "$(AUDIO_DEVICE_DIR)"
+	ln -f "device/MidiHands Audio.amxd" "$(AUDIO_DEVICE_DIR)/MidiHands Audio.amxd"
 	@echo "Restart Live to load the external from this checkout."
 
 uninstall:
-	rm -f "$(MAX_PACKAGES)/midihands" "$(DEVICE_DIR)/MidiHands.amxd"
+	rm -f "$(MAX_PACKAGES)/midihands" "$(DEVICE_DIR)/MidiHands.amxd" "$(AUDIO_DEVICE_DIR)/MidiHands Audio.amxd"
 
 replay: cli
 	./build/mh replay $(CLIPS) $(if $(PHASES),--phases $(PHASES))
@@ -94,10 +109,11 @@ dist: check-version all
 	mkdir -p "$(DIST)"
 	ditto --norsrc $(PACKAGE) "$(DIST)/midihands"
 	find "$(DIST)" -name .DS_Store -delete
-	cp device/MidiHands.amxd scripts/install.sh scripts/uninstall.sh "$(DIST)/"
+	cp device/MidiHands.amxd "device/MidiHands Audio.amxd" scripts/install.sh scripts/uninstall.sh "$(DIST)/"
 	cp scripts/INSTALL.txt "$(DIST)/INSTALL.txt"
 	cp LICENSE "$(DIST)/LICENSE.txt"
 	codesign --verify --strict "$(DIST)/midihands/externals/mh.hands.mxo"
+	codesign --verify --strict "$(DIST)/midihands/externals/mh.audio~.mxo"
 	cd dist && ditto -c -k --norsrc --keepParent MidiHands-$(VERSION) MidiHands-macOS.zip
 	cp scripts/install.sh dist/install.sh
 	cd dist && shasum -a 256 MidiHands-macOS.zip install.sh > SHA256SUMS

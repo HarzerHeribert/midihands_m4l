@@ -92,11 +92,14 @@ void Recorder::start(const std::string& title, double x, double y, double w, dou
     started(false, "allow Screen & System Audio Recording for Ableton Live in System Settings > Privacy & Security, then restart Live");
     return;
   }
-  // The window, frontmost first (main thread: AppKit).
+  // The window, frontmost first (main thread: AppKit). NSApp.windows, not orderedWindows:
+  // the video window floats, and orderedWindows leaves floating windows out.
   NSString* prefix = [NSString stringWithUTF8String:title.c_str()];
   NSWindow* window = nil;
-  for (NSWindow* candidate in NSApp.orderedWindows)
-    if (candidate.isVisible && [candidate.title hasPrefix:prefix]) { window = candidate; break; }
+  for (NSWindow* candidate in NSApp.windows)
+    if (candidate.isVisible && [candidate.title hasPrefix:prefix] &&
+        (!window || candidate.orderedIndex < window.orderedIndex))
+      window = candidate;
   if (!window) { started(false, "open the video window first"); return; }
   const CGWindowID windowId = CGWindowID(window.windowNumber);
   const double scale = window.backingScaleFactor;

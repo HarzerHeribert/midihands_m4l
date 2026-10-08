@@ -9,7 +9,7 @@
   device's "MidiHands Video" window; the settings come from the editor's
   Live parameters, so both always show the same.
 
-  Max -> page: param <key> <value>, hands ..., expr ..., picture <url>, status ...,
+  Max -> page: param <key> <value>, hands ..., expr ..., audio <40 values>, picture <url>, status ...,
                recording <0|1>, recorded <path>, recordfail <why>, recreq (toggle recording)
   page -> Max: hello, set <key> <value>, record 1 <x> <y> <w> <h> | record 0,
                fullscreen 1 <left> <top> <right> <bottom> | fullscreen 0
@@ -18,14 +18,14 @@
 :root { --fg: #b5b5b5; --hi: #e2e2e2; --dim: #757575; --orange: #ffad56; --alert: #e76942; --frame: #111; --control: #1e1e1e; }
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 11px/1.3 "AbletonSansSmall", -apple-system, sans-serif; color: var(--fg); user-select: none; -webkit-user-select: none; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-#bar { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; align-items: center; padding: 6px; background: rgba(36, 36, 36, .92);
+#bar { position: absolute; top: 10px; right: 10px; max-width: calc(100% - 32px); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; align-items: center; padding: 6px; background: rgba(36, 36, 36, .92);
   border: 1px solid var(--frame); transition: opacity .25s; }
 body.idle #bar { opacity: 0; }
 /* While recording the bar stays out of the picture: it shows only while the pointer is near it. */
 body.recording #bar { opacity: 0; }
 body.recording #bar:hover { opacity: 1; }
 .seg { display: flex; border: 1px solid var(--frame); background: var(--control); }
-.seg button, .tog { border: 0; border-right: 1px solid var(--frame); background: transparent; color: var(--fg); padding: 4px 9px; font: inherit; }
+.seg button, .tog { white-space: nowrap; border: 0; border-right: 1px solid var(--frame); background: transparent; color: var(--fg); padding: 4px 9px; font: inherit; }
 .seg button:last-child { border-right: 0; }
 .seg button.on { background: var(--orange); color: #070707; }
 .tog { border: 1px solid var(--frame); background: var(--control); }
@@ -61,7 +61,7 @@ for (let s = 0; s < 4; s++) {
   for (let k = 0; k < 6; k++) P[`x${s}p${k}`] = 0.5;
   for (let j = 0; j < 7; j++) Object.assign(P, { [`x${s}m${j}s`]: 0, [`x${s}m${j}a`]: 0.5 });
 }
-const S = { hands: [null, null], fade: [0, 0], expr: new Array(10).fill(0), recording: false, recStart: 0, full: false, url: "" };
+const S = { hands: [null, null], fade: [0, 0], expr: new Array(10).fill(0), audio: new Array(40).fill(0), recording: false, recStart: 0, full: false, url: "" };
 
 const R = window.MHGL ? MHGL.create($("gl")) : null;
 if (R) R.setSource($("picture")); else $("nogl").style.display = "grid";
@@ -88,6 +88,7 @@ function onHands(...a) {
   }
 }
 function onExpr(...v) { S.expr = v.slice(0, 10); }
+function onAudio(...v) { for (let i = 0; i < 40; i++) S.audio[i] = +v[i] || 0; }
 // A sharper picture than the editor's: as wide as this window, up to 1920.
 function pictureUrl() { return S.url ? `${S.url}?w=${Math.min(1920, Math.max(640, Math.round(innerWidth * devicePixelRatio / 320) * 320))}` : ""; }
 function onPicture(url) { S.url = url; const u = pictureUrl(); if ($("picture").getAttribute("src") !== u) $("picture").src = u; }
@@ -98,7 +99,7 @@ function onRecordfail(...why) { S.recording = false; render(); toast(`Recording 
 function onRecreq() { toggleRecording(); }
 if (MAX) {
   const bind = { param: onParam, hands: onHands, expr: onExpr, picture: onPicture, status: onStatus,
-    recording: onRecording, recorded: onRecorded, recordfail: onRecordfail, recreq: onRecreq };
+    recording: onRecording, recorded: onRecorded, recordfail: onRecordfail, recreq: onRecreq, audio: onAudio };
   for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
 }
 
@@ -144,7 +145,7 @@ function frame(now) {
     look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: P.vcues ? [...used] : [],
     camera: P.vcam, grade: "none", fxOnHands: !!P.vfxh, aspect: MHFX.FORMATS[P.vfmt] || 16 / 9, brackets: false,
   });
-  R.setHands(S.hands); R.setExpr(S.expr); R.setFx(MHFX.slots(P, S.expr));
+  R.setHands(S.hands); R.setExpr(S.expr); R.setFx(MHFX.slots(P, S.expr.concat(S.audio)));
   R.render(now / 1000);
   if (S.recording) {
     const sec = Math.floor((now - S.recStart) / 1000);
@@ -183,7 +184,13 @@ if (!MAX) {
     S.expr = [.5 + Math.sin(t) * .3, .3, .2, .1, .5, .5 + Math.cos(t * .7) * .3, .7, (Math.sin(t) + 1) / 2, .2, .55];
   }, 66);
 }
-if (MAX) send("hello");
+if (MAX) {
+  send("hello");
+  // First open: to the right of the screen, so the editor (left, floating) does not cover it.
+  const sc = window.screen, w = 960, h = 540 + 28;
+  const left = (sc.availLeft ?? 0) + Math.max(0, sc.availWidth - w - 40), top = (sc.availTop ?? 0) + 90;
+  send("place", left, top, left + w, top + h);
+}
 </script>
 </body>
 </html>

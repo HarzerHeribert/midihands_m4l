@@ -21,5 +21,5 @@ jobs:
       - name: Build external, CLI and device; run tests
         run: make all
       - name: Device file is the generated one
-        run: python3 device/build_device.py && git diff --exit-code -- device/MidiHands.amxd
+        run: python3 device/build_device.py && git diff --exit-code -- device/MidiHands.amxd "device/MidiHands Audio.amxd"
       - run: ./build/mh version

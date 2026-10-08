@@ -15,6 +15,8 @@ Install
   4. In Live's browser: User Library > Presets > MIDI Effects > Max MIDI Effect > MidiHands.
      Drop it on a MIDI track before an instrument and switch the camera on.
      The first time, macOS asks whether Live may use the camera: allow it.
+  5. Optional: MidiHands Audio (Audio Effects > Max Audio Effect) on any track lets its
+     sound move the video effects too.
 
 Why a script and not a double-click: MidiHands contains a small native program that
 reads the camera. It is not notarized by Apple, so macOS would block it if it came

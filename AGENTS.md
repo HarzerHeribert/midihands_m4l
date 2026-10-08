@@ -39,6 +39,14 @@ Read README.md first.
   messages as the editor (`---mh_param`) and sends commands back through `---mh_vcmd`.
 - `mac/recorder` records the video window (ScreenCaptureKit, AVAssetWriter) into
   ~/Movies/MidiHands; Live needs the Screen & System Audio Recording permission.
+- MidiHands Audio (audio effect, `build_audio()` in the generator) passes its track's sound
+  through and runs `mh.audio~` (`core/audio`). It sends on the global name `mh_audio`
+  (no `---`, so every device in the Set hears it); `mh-audio-hub.js` in each MidiHands
+  collects the letters A..H and feeds the pages. A Max MIDI effect gets no audio, and
+  `live.routing` delivered none to a Max audio effect either (tested in Live 12.4), so the
+  device sits on the track it listens to.
+- FX modulation sources are `MOD_SOURCES` in the generator (hand movements, then letter x
+  feature): append only, Sets store the index.
 - Links (MOVE) are a fixed pool of `LINKS` in the generator. A link's target id lives in a
   `live.object` saved with `_persistence 1` (as in Ableton's own mapping snippets);
   `live.remote~` only gets it while the link and Movement are on. `mh-links.js` follows Live's

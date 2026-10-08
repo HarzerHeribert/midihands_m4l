@@ -7,8 +7,8 @@
 **Play Ableton Live with your hands.** MidiHands is a Max for Live device that turns your
 camera into an instrument. Straighten a finger to play a note or a chord in your song's key;
 raise, pinch or tilt your hand to sweep a filter, open a reverb or ride any knob in Live.
-The same movements play 22 video effects, so your set comes with its own visualizer, ready
-to record for Instagram, TikTok or YouTube.
+The same movements play 22 video effects, and so can your music, so your set comes with its
+own visualizer, ready to record for Instagram, TikTok or YouTube.
 
 [![Latest release](https://img.shields.io/github/v/release/HarzerHeribert/midihands_m4l?label=release&color=ffad56)](https://github.com/HarzerHeribert/midihands_m4l/releases/latest)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-3a3a3a)
@@ -16,6 +16,7 @@ to record for Instagram, TikTok or YouTube.
 
 [Install](#install) · [Quick start](#quick-start) · [Play](#play-notes-and-chords) ·
 [Move](#move-parameters-with-your-hands) · [FX](#fx-a-visualizer-you-play) ·
+[Effects that follow the music](#effects-that-follow-the-music) ·
 [Video and recording](#video-window-and-recording) · [Tips](#tips-for-good-tracking) ·
 [Troubleshooting](#troubleshooting)
 
@@ -24,8 +25,8 @@ to record for Instagram, TikTok or YouTube.
 - **Moves anything.** Link hand height, sideways position, pinch, fist or tilt to any
   parameter in Live. One movement can drive many parameters, each with its own range and curve.
 - **Plays video, too.** 22 effects, from neon edges to kaleidoscopes and reaction
-  diffusion, moved by the same hand movements. Full screen on a projector, or recorded with
-  Live's sound in the format your platform wants.
+  diffusion, moved by your hands or by the music. Full screen on a projector, or recorded
+  with Live's sound in the format your platform wants.
 - **Feels immediate.** Hand tracking runs inside Live on Apple's Vision framework, a few
   milliseconds per frame on Apple silicon. No extra app, no virtual MIDI ports.
 - **Live-native.** Every setting is a Live parameter: saved with your Set, automatable,
@@ -114,10 +115,10 @@ The **FX** page turns the camera picture and your hands into a music video.
 1. Pick an effect in one of the four slots. They run top to bottom, so a *Glow* after
    *Neon Edges* makes the edges shine. The effects come in six groups: Color, Stylize,
    Distort, Feedback (echoes, trails, time warp), Glitch and Simulation.
-2. Under any knob, and under **Mix**, choose a hand movement, then drag the small bar
-   next to it: to the right the movement turns the knob up, to the left down. An orange dot
-   on the knob shows where your hand has moved it. Pinch to zoom a kaleidoscope, make a
-   fist to flash a strobe, raise your hand to bend a tunnel.
+2. Under any knob, and under **Mix**, choose a hand movement (or a sound, see below), then
+   drag the small bar next to it: to the right the movement turns the knob up, to the left
+   down. An orange dot on the knob shows where it has moved it. Pinch to zoom a
+   kaleidoscope, make a fist to flash a strobe, raise your hand to bend a tunnel.
 3. Choose how hands are drawn: **Jelly** (the glossy look of the original midihands app),
    **Lines** or **Off**, in Live's cyan and orange or in **Amber**. **Cues** draw what each
    movement is doing right on your hands: the pinch distance, the height, the fist.
@@ -125,6 +126,22 @@ The **FX** page turns the camera picture and your hands into a music video.
 Effects marked *Follow Hands* move their center to your hands. **Camera** sets how much of
 the camera picture shows: at 0 only the hands and effects remain, on black. Every FX
 control is a Live parameter too, so you can automate it or map it to a controller.
+
+## Effects that follow the music
+
+Put **MidiHands Audio** on any track: the kick, the drum group, or Main for the whole mix.
+You find it in Live's browser under User Library > Presets > Audio Effects > Max Audio
+Effect. It passes the sound through unchanged and sends five values to MidiHands:
+**Level**, **Bass**, **Mid**, **High** and **Beat**, a pulse on every hit.
+
+Each MidiHands Audio sends as a letter, A to H. Pick it under any FX knob, for example
+*A Beat*, next to the hand movements. Use as many as you like: the kick on A pumps a glow,
+the hats on B ripple the picture, the whole mix on C sets the brightness. The FX page shows
+the letters it hears, with live meters and the track names.
+
+On the device: **Gain** and **Auto Level** set the range (Auto Level keeps quiet and loud
+material moving the full way), **Smooth** how slowly values fall back, **Beat Sens** how
+easily a hit counts, and **Decay** how long a beat pulse lasts.
 
 ## Video window and recording
 
@@ -190,6 +207,9 @@ straighten a finger. Hands should face the camera.
 System Audio Recording and restart Live. The video window must be open and on screen
 while it records; it may be behind other windows, but not minimized.
 
+**A letter on the FX page shows in red.** Two MidiHands Audio devices send as the same
+letter; give each its own.
+
 **Files disappear after a while.** If your Documents folder is in iCloud Drive with "Optimize
 Mac Storage", macOS may remove local copies of `Documents/Max 9/Packages`. Keep that folder
 downloaded, or run the install command again.
@@ -211,8 +231,9 @@ and download from GitHub.
 
 ## Uninstall
 
-Run `./uninstall.sh` from the release folder, or delete `~/Documents/Max 9/Packages/midihands`
-and `MidiHands.amxd` in your User Library under Presets > MIDI Effects > Max MIDI Effect.
+Run `./uninstall.sh` from the release folder, or delete `~/Documents/Max 9/Packages/midihands`,
+`MidiHands.amxd` in your User Library under Presets > MIDI Effects > Max MIDI Effect, and
+`MidiHands Audio.amxd` under Presets > Audio Effects > Max Audio Effect.
 
 ## Contributing and building
 

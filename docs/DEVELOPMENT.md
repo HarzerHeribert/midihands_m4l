@@ -25,17 +25,23 @@ a demo with fake hands, which is the quickest way to work on the UI.
 
 ```
 core/     portable C++17: filters, finger features, hand sides, scales, finger slots and
-          presets, note bookkeeping, engine, camera-picture thumbnails, version
+          presets, note bookkeeping, engine, camera-picture thumbnails, version, and the
+          audio analysis for MidiHands Audio (audio: bands, auto level, beats)
 mac/      macOS only: AVFoundation camera + Apple Vision hand pose (tracker), the shared
           backend that runs one pipeline per camera in use (camera_hub), a loopback MJPEG
-          server for the editor's camera picture (preview_server), release updates (updater)
-max/      the mh.hands Max external (one per device, subscribes to the shared backend)
-device/   build_device.py generates MidiHands.amxd (never edit the .amxd by hand)
-package/  the Max package: externals/ (built), javascript/ (hand view, editor page, links)
+          server for the camera picture (preview_server), release updates (updater), and
+          recording the video window (recorder: ScreenCaptureKit + AVAssetWriter)
+max/      the Max externals: mh.hands (one per MidiHands, subscribes to the shared backend)
+          and mh.audio~ (one per MidiHands Audio)
+device/   build_device.py generates MidiHands.amxd and MidiHands Audio.amxd (never edit an
+          .amxd by hand)
+package/  the Max package: externals/ (built), javascript/ (strip hand view, editor and video
+          pages, WebGL renderer mh-gl.js, effects mh-fx.js, links, audio hub)
 scripts/  install, uninstall and release scripts
 tools/    the mh command-line tool
 tests/    core unit tests
-docs/     README images and the script that renders them
+docs/     README images, the script that renders them, and render/gallery.html (every
+          effect side by side; reports shader errors)
 ```
 
 Only `mac/` is platform-specific. A Windows version would need a new tracker there (Media
