@@ -1,7 +1,7 @@
 {
 	"name" : "midihands",
 	"displayname" : "midihands",
-	"version" : "0.1.0",
+	"version" : "0.2.0",
 	"author" : "Eneas Dembach",
 	"description" : "Camera hand tracking to MIDI for Max for Live (Apple Vision).",
 	"tags" : [ "midi", "hand tracking", "max for live" ],

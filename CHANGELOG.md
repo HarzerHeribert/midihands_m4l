@@ -5,6 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-08
+
 ### Added
 - FX page: four effect slots with 22 video effects (Film Grade, Gradient Map, Thermal, Neon
   Edges, Glow, Halftone, ASCII, Mosaic, Kaleidoscope, Ripple, Liquid, RGB Split, Mirror,
