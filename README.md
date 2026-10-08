@@ -26,7 +26,7 @@ own visualizer, ready to record for Instagram, TikTok or YouTube.
 - **Moves anything.** Link hand height, sideways position, pinch, fist or tilt to any
   parameter in Live. One movement can drive many parameters, each with its own range and curve.
 - **Plays video, too.** 22 effects, from neon edges to kaleidoscopes and reaction
-  diffusion, moved by your hands or by the music. Full screen on a projector, or recorded
+  diffusion, moved by your hands or by the music. In its own window on a projector, or recorded
   with Live's sound in the format your platform wants.
 - **Feels immediate.** Hand tracking runs inside Live, on Apple's Vision framework on a Mac
   and on Google's MediaPipe hand models on Windows: a few milliseconds per frame. No extra
@@ -166,8 +166,8 @@ easily a hit counts, and **Decay** how long a beat pulse lasts.
 Click **Video window** on the FX page for the picture in its own window, at full
 resolution. Resize it freely; the picture keeps its format: **16:9** for YouTube and
 screens, **9:16** for Reels, Stories and TikTok, **1:1** or **4:5** for feed posts.
-**Fullscreen** fills the display the window is on, for a projector or a second screen; Esc
-leaves it.
+For a projector or a second screen, drag the window there and make it as large as the
+display.
 
 Click **● Rec**, in the window or on the FX page, to record the picture with Live's sound.
 The video is saved as an MP4 (H.264 and AAC) in *Movies/MidiHands*, ready to upload. In

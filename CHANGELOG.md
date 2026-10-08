@@ -5,6 +5,11 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+### Removed
+- The video window's Fullscreen button. Hiding the window's title bar made the picture go
+  black and stay black (the embedded browser view does not survive Max rebuilding the
+  window). Drag the window to a display and resize it instead.
+
 ## [0.3.0-beta.1] - 2026-10-08
 
 ### Added

@@ -3,3 +3,4 @@ package/externals/
 .DS_Store
 *.dSYM/
 dist/
+__pycache__/

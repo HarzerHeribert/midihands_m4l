@@ -657,29 +657,15 @@ def build_video() -> dict:
     v.connect(expr_in, 0, expr_msg)
     v.connect(expr_msg, 0, ui)
 
-    # Page commands: fullscreen and place here, everything else to the editor patch.
-    cmds = v.obj("route fullscreen place", 20, 530)
+    # Page commands: place here, everything else to the editor patch. No fullscreen: changing
+    # the window's title bar rebuilds the window, and the page in it then often stops drawing
+    # (tested in Max 9.1), so the window is only ever moved and resized.
+    cmds = v.obj("route place", 20, 530)
     v.connect(ui, 0, cmds)
-    v.connect(cmds, 2, v.obj("s ---mh_vcmd", 160, 560))
-    place = v.msg("window size $1 $2 $3 $4, window exec", 500, 560)
-    v.connect(cmds, 1, place)
+    v.connect(cmds, 1, v.obj("s ---mh_vcmd", 160, 560))
+    place = v.msg("window size $1 $2 $3 $4, window exec", 20, 560)
+    v.connect(cmds, 0, place)
     v.connect(place, 0, tp)
-    full = v.obj("route 1 0", 20, 560)
-    v.connect(cmds, 0, full)
-    # Window rectangle (left top right bottom), polled to keep the page filling the window.
-    current = v.obj("zl reg", 600, 420)
-    saved = v.obj("zl reg", 700, 470)
-    enter = v.obj("t l b", 20, 590)
-    v.connect(full, 0, enter)
-    v.connect(enter, 1, current)              # remember the window before covering the screen
-    v.connect(current, 0, saved, 1)
-    go_full = v.msg("window flags notitle, window size $1 $2 $3 $4, window exec", 20, 620)
-    v.connect(enter, 0, go_full)
-    v.connect(go_full, 0, tp)
-    v.connect(full, 1, saved)
-    leave = v.msg("window flags title, window size $1 $2 $3 $4, window exec", 260, 620)
-    v.connect(saved, 0, leave)
-    v.connect(leave, 0, tp)
 
     metro = v.obj("metro 250", 400, 330)
     start = v.msg("1", 400, 300)
@@ -689,10 +675,9 @@ def build_video() -> dict:
     v.connect(metro, 0, ask)
     v.connect(ask, 0, tp)
     is_window = v.obj("route window", 400, 650)
-    v.connect(tp, 0, is_window)
+    v.connect(tp, 0, is_window)  # window size <left top right bottom>: keep the page filling the window
     is_size = v.obj("route size", 400, 680)
     v.connect(is_window, 0, is_size)
-    v.connect(is_size, 0, current, 1)
     split = v.obj("t l l", 400, 710)
     v.connect(is_size, 0, split)
     width = v.obj("expr $i3 - $i1", 400, 740)
