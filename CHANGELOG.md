@@ -10,11 +10,13 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
   Edges, Glow, Halftone, ASCII, Mosaic, Kaleidoscope, Ripple, Liquid, RGB Split, Mirror,
   Tunnel, Echo, RGB Trails, Time Warp, VHS, Glitch, CRT, Strobe, Reaction Diffusion). Every
   knob and the mix can follow a hand movement, with an amount in either direction.
-- Hands drawn with WebGL: the original app's glossy *Jelly* look, *Lines* or off, in Live
-  colors or *Amber*; optional cues that show what each movement is doing.
+- Hands drawn with WebGL: the original app's glossy *Jelly* look (with slimmer fingers),
+  *Lines* or off, in Live colors or *Amber*; optional cues that show what each movement is
+  doing.
 - Video window: the picture at full resolution in 16:9, 9:16, 1:1 or 4:5, resizable, and
   fullscreen on any display.
-- Recording: the video window with Live's sound as an MP4 in Movies/MidiHands.
+- Recording: the video window with Live's sound as an MP4 in Movies/MidiHands. The first
+  time, macOS asks to allow Screen & System Audio Recording for Ableton Live.
 - MidiHands Audio, a companion audio effect installed alongside: on any track (or Main) it
   sends that track's level, bass, mid, high and a beat pulse to MidiHands, as one of eight
   letters, so effects can follow the music. Several can feed one MidiHands.
@@ -22,14 +24,12 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 ### Changed
 - The camera picture is in color and as sharp as the window showing it (up to 1920 wide);
   the Play page draws it with WebGL.
+- README rewritten for players, with product renderings; build and release notes moved to
+  docs/DEVELOPMENT.md. `make install` now replaces a release install with the checkout.
 
 ### Fixed
 - `install.sh` run from an unzipped release folder reported failure (exit code 1) although
   the install succeeded.
-
-### Changed
-- README rewritten for players, with product renderings; build and release notes moved to
-  docs/DEVELOPMENT.md. `make install` now replaces a release install with the checkout.
 
 ## [0.1.0] - 2026-10-08
 
