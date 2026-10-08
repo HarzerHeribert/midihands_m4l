@@ -37,8 +37,7 @@ SCALES = ["Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Locri
           "Harmonic Minor", "Melodic Minor", "Major Pentatonic", "Minor Pentatonic",
           "Blues", "Chromatic"]  # order = max/mh.hands.mm scaleTypes()
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-MAP_SLOTS = 8
-MAP_DEFAULTS = [5, 7, 0, 3, 6, 9, 1, 4]  # R Height, R Pinch, L Height, L Fist, R X, R Tilt, L X, L Tilt
+LINKS = 16  # movement -> Live parameter links; any number may share a movement
 
 EDITOR_SIZE = (1200.0, 760.0)
 
@@ -55,6 +54,7 @@ PORTS = {
     "s": (1, 0, []), "r": (0, 1, [""]), "inlet": (0, 1, [""]),
     "expr": (2, 1, [""]), "change": (1, 3, ["", "int", "int"]), "thispatcher": (1, 2, ["", ""]),
     "onebang": (2, 2, ["bang", "bang"]), "absolutepath": (1, 1, [""]),
+    "v8": (1, 1, [""]),
 }
 
 
@@ -209,15 +209,15 @@ def stored_params() -> list[tuple]:
             (f"f{k}deg", f"Finger {k + 1} Degree", "int", -14, 21, deg, 1, None),
             (f"f{k}oct", f"Finger {k + 1} Octave", "int", -3, 3, octv, 1, None),
         ]
-    for k in range(MAP_SLOTS):
+    for k in range(LINKS):
         params += [
-            (f"m{k}on", f"Map {k + 1} On", "enum", 0, 1, 1, 0, ["off", "on"]),
-            (f"m{k}src", f"Map {k + 1} Source", "enum", 0, 9, MAP_DEFAULTS[k], 1, EXPRESSIONS),
-            (f"m{k}lo", f"Map {k + 1} In Low", "float", 0, 1, 0.0, 1, None),
-            (f"m{k}hi", f"Map {k + 1} In High", "float", 0, 1, 1.0, 1, None),
-            (f"m{k}curve", f"Map {k + 1} Curve", "int", -100, 100, 0, 1, None),
-            (f"m{k}min", f"Map {k + 1} Min", "float", 0, 1, 0.0, 0, None),
-            (f"m{k}max", f"Map {k + 1} Max", "float", 0, 1, 1.0, 0, None),
+            (f"m{k}on", f"Link {k + 1} On", "enum", 0, 1, 1, 0, ["off", "on"]),
+            (f"m{k}src", f"Link {k + 1} Source", "enum", 0, 9, 0, 1, EXPRESSIONS),
+            (f"m{k}lo", f"Link {k + 1} In Low", "float", 0, 1, 0.0, 1, None),
+            (f"m{k}hi", f"Link {k + 1} In High", "float", 0, 1, 1.0, 1, None),
+            (f"m{k}curve", f"Link {k + 1} Curve", "int", -100, 100, 0, 1, None),
+            (f"m{k}min", f"Link {k + 1} Min", "float", 0, 1, 0.0, 0, None),
+            (f"m{k}max", f"Link {k + 1} Max", "float", 0, 1, 1.0, 0, None),
         ]
     return params
 
@@ -270,8 +270,8 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(expr_in, 0, expr_msg)
     e.connect(expr_msg, 0, ui)
 
-    # Page commands: set <key> <value>, map <slot>, unmap <slot>, hello.
-    commands = e.obj("route set map unmap hello", 20, 260)
+    # Page commands: set <key> <value>, link <k>, unlink <k>, hello.
+    commands = e.obj("route set link unlink hello", 20, 260)
     e.connect(ui, 0, commands)
 
     # Stored parameters: hidden live.numbox objects.
@@ -407,13 +407,38 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(refresh, 1, numbox["scale"])
     e.connect(refresh, 0, numbox["root"])
 
-    # Map slots: movement -> range/curve -> Live parameter.
-    map_route = e.obj("route " + " ".join(str(k) for k in range(MAP_SLOTS)), 20, 2100)
-    unmap_route = e.obj("route " + " ".join(str(k) for k in range(MAP_SLOTS)), 400, 2100)
-    e.connect(commands, 1, map_route)
-    e.connect(commands, 2, unmap_route)
-    for k in range(MAP_SLOTS):
-        bx, by = 20 + 230 * k, 2200
+    # Links: movement -> range/curve -> Live parameter. mh-links.js names the
+    # targets and knows the parameter selected in Live, so "link <k>" links to
+    # it at once; with nothing selected the link listens for a click instead
+    # (live.map). Each target id is kept by a live.object with Live's
+    # persistence, so links come back with the Set.
+    links_js = e.obj("v8 mh-links.js", 1000, 2040)
+    link_cmd = e.obj("prepend link", 1000, 2010)
+    e.connect(commands, 1, link_cmd)
+    e.connect(link_cmd, 0, links_js)
+    links_report = e.msg("report", 1100, 2010)
+    e.connect(hello_steps, 0, links_report)
+    e.connect(links_report, 0, links_js)
+    # Device ready: start the helper, read back stored targets, then let
+    # links attach (live.remote~ must not be touched before Live's API is up).
+    links_boot = e.obj("t b b b", 1200, 1980)
+    e.connect(e.obj("r ---mh_boot", 1200, 1950), 0, links_boot)
+    links_init = e.msg("init", 1260, 2010)
+    e.connect(links_boot, 2, links_init)
+    e.connect(links_init, 0, links_js)
+    js_out = e.obj("route setid listen", 1000, 2070)
+    e.connect(links_js, 0, js_out)
+    e.connect(js_out, 2, ui)  # mapname <k> <text>, selected <text>
+    slot_names = " ".join(str(k) for k in range(LINKS))
+    setid_route = e.obj("route " + slot_names, 1000, 2100)
+    e.connect(js_out, 0, setid_route)
+    listen_route = e.obj("route " + slot_names, 1300, 2100)
+    e.connect(js_out, 1, listen_route)
+    unlink_route = e.obj("route " + slot_names, 400, 2100)
+    e.connect(commands, 2, unlink_route)
+    for k in range(LINKS):
+        bx, by = 20 + 240 * (k % 8), 2200 + 640 * (k // 8)
+        # movement value -> shaped 0..1 -> parameter
         index = e.obj("+ 1", bx, by)
         e.connect(numbox[f"m{k}src"], 0, index)
         pick_expr = e.obj("zl nth 1", bx, by + 30)
@@ -432,50 +457,83 @@ def build_editor() -> tuple[Patch, dict]:
         e.connect(shape, 0, ramp)
         line = e.obj("line~", bx, by + 120)
         e.connect(ramp, 0, line)
-        lmap = e._add({"maxclass": "newobj", "text": "live.map @strict 1", "numinlets": 1, "numoutlets": 5,
-                       "outlettype": ["", "", "", "", ""], "patching_rect": [bx + 80, by + 150, 110, 20]})
-        start_map = e.msg("mapping 1", bx + 80, by + 120)
-        e.connect(map_route, k, start_map)
-        e.connect(start_map, 0, lmap)
-        clear = e.msg("unmap", bx + 160, by + 120)
-        e.connect(unmap_route, k, clear)
-        e.connect(clear, 0, lmap)
-        remote = e.obj("live.remote~ @normalized 1", bx, by + 180)
+        remote = e.obj("live.remote~ @normalized 1", bx, by + 150)
         e.connect(line, 0, remote, 0)
-        # A slot drives its parameter only while Movement and the slot are on.
-        # Off detaches live.remote~ (id 0), so the parameter can be turned by
-        # hand and its automation plays; on re-attaches the stored mapping.
-        target_id = e.obj("zl reg", bx, by + 240)
-        e.connect(lmap, 1, target_id)
-        attach = e.obj("gate 1 0", bx, by + 270)
-        e.connect(target_id, 0, attach, 1)
-        e.connect(attach, 0, remote, 1)
-        on_pak = e.obj("pak 0 0", bx, by + 300)
-        e.connect(move_in, 0, on_pak, 0)
-        e.connect(numbox[f"m{k}on"], 0, on_pak, 1)
-        on_both = e.obj("expr $i1 && $i2", bx, by + 330)
-        e.connect(on_pak, 0, on_both)
-        on_change = e.obj("change -1", bx, by + 360)
-        e.connect(on_both, 0, on_change)
-        on_steps = e.obj("t i i", bx, by + 390)
-        e.connect(on_change, 0, on_steps)
-        e.connect(on_steps, 1, attach, 0)
-        on_pick = e.obj("sel 1 0", bx, by + 420)
-        e.connect(on_steps, 0, on_pick)
-        e.connect(on_pick, 0, target_id)
-        detach = e.msg("id 0", bx + 60, by + 450)
-        e.connect(on_pick, 1, detach)
-        e.connect(detach, 0, remote, 1)
-        # Remember the target name so a reopened page can be told again.
-        name_store = e.obj("zl reg", bx + 80, by + 180)
-        e.connect(lmap, 2, name_store)
-        e.connect(resend, 0, name_store)
-        name_msg = e.obj(f"prepend mapname {k}", bx + 80, by + 210)
-        e.connect(name_store, 0, name_msg)
-        e.connect(name_msg, 0, ui)
-        state_msg = e.obj(f"prepend mapping {k}", bx + 160, by + 210)
+
+        # target: "id N" -> persistent live.object -> getid -> everyone
+        set_target = e.obj("t b l", bx + 120, by + 180)
+        e.connect(setid_route, k, set_target)
+        target = e._add({"maxclass": "newobj", "text": "live.object", "numinlets": 2, "numoutlets": 1,
+                         "outlettype": [""], "patching_rect": [bx + 120, by + 240, 80, 20],
+                         "saved_object_attributes": {"_persistence": 1}})
+        e.connect(set_target, 1, target, 1)
+        getid = e.msg("getid", bx + 120, by + 210)
+        e.connect(set_target, 0, getid)
+        e.connect(links_boot, 1, getid)
+        e.connect(getid, 0, target)
+        got = e.obj("t l l", bx + 120, by + 270)
+        e.connect(target, 0, got)
+        name_req = e.obj(f"prepend label {k}", bx + 120, by + 300)
+        e.connect(got, 0, name_req)
+        e.connect(name_req, 0, links_js)
+
+        # click-to-link when nothing is selected in Live
+        lmap = e._add({"maxclass": "newobj", "text": "live.map @strict 1", "numinlets": 1, "numoutlets": 5,
+                       "outlettype": ["", "", "", "", ""], "patching_rect": [bx, by + 210, 110, 20]})
+        start_map = e.msg("mapping 1", bx, by + 180)
+        e.connect(listen_route, k, start_map)
+        e.connect(start_map, 0, lmap)
+        clicked = e.obj("route id", bx, by + 240)
+        e.connect(lmap, 1, clicked)
+        real = e.obj("sel 0", bx, by + 270)  # unmapping is handled below, never by live.map
+        e.connect(clicked, 0, real)
+        as_id = e.obj("prepend id", bx, by + 300)
+        e.connect(real, 1, as_id)
+        e.connect(as_id, 0, set_target)
+        state_msg = e.obj(f"prepend mapping {k}", bx, by + 330)
         e.connect(lmap, 3, state_msg)
         e.connect(state_msg, 0, ui)
+        unlink = e.obj("t b b", bx + 60, by + 360)
+        e.connect(unlink_route, k, unlink)
+        cancel = e.msg("mapping 0", bx + 60, by + 390)
+        e.connect(unlink, 1, cancel)
+        e.connect(cancel, 0, lmap)
+        clear = e.msg("id 0", bx + 140, by + 390)
+        e.connect(unlink, 0, clear)
+        e.connect(clear, 0, set_target)
+
+        # A link drives its parameter only while Movement and the link are on.
+        # Off detaches live.remote~ (id 0), so the parameter can be turned by
+        # hand and its automation plays; on re-attaches the stored target.
+        target_id = e.obj("zl reg", bx, by + 420)
+        e.connect(got, 1, target_id)
+        attach = e.obj("gate 1 0", bx, by + 450)
+        e.connect(target_id, 0, attach, 1)
+        e.connect(attach, 0, remote, 1)
+        on_pak = e.obj("pak 0 0", bx, by + 480)
+        e.connect(move_in, 0, on_pak, 0)
+        e.connect(numbox[f"m{k}on"], 0, on_pak, 1)
+        on_both = e.obj("expr $i1 && $i2", bx, by + 510)
+        e.connect(on_pak, 0, on_both)
+        ready_gate = e.obj("gate 1 0", bx + 120, by + 510)
+        e.connect(on_both, 0, ready_gate, 1)
+        ready = e.obj("t b b", bx + 120, by + 480)
+        e.connect(links_boot, 0, ready)
+        open_ready = e.msg("1", bx + 160, by + 450)
+        e.connect(ready, 1, open_ready)
+        e.connect(open_ready, 0, ready_gate, 0)
+        e.connect(ready, 0, on_pak)  # pak resends its pair on bang
+        on_change = e.obj("change -1", bx, by + 540)
+        e.connect(ready_gate, 0, on_change)
+        on_steps = e.obj("t i i", bx, by + 570)
+        e.connect(on_change, 0, on_steps)
+        e.connect(on_steps, 1, attach, 0)
+        on_pick = e.obj("sel 1 0", bx, by + 600)
+        e.connect(on_steps, 0, on_pick)
+        e.connect(on_pick, 0, target_id)
+        detach = e.msg("id 0", bx + 80, by + 630)
+        e.connect(on_pick, 1, detach)
+        e.connect(detach, 0, remote, 1)
 
     window = [80.0, 80.0, W, H]  # x, y, width, height
     return e, e.patcher(window, toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,

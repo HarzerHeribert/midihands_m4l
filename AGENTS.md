@@ -30,5 +30,10 @@ Read README.md first.
   HTML). Adding a setting means: a row in `stored_params()`, a key in the page's `P`, and,
   if the engine needs it, an entry in `ENGINE_MESSAGES` plus handling in `mh.hands`.
 - Open the page in a browser to work on the UI: without Max it runs a demo.
+- Links (MOVE) are a fixed pool of `LINKS` in the generator. A link's target id lives in a
+  `live.object` saved with `_persistence 1` (as in Ableton's own mapping snippets);
+  `live.remote~` only gets it while the link and Movement are on. `mh-links.js` follows Live's
+  selected parameter and names targets. Nothing may touch Live API objects before
+  `---mh_boot` (live.thisdevice).
 - Live keeps a native external loaded until it quits: restart Live after `make external`.
 - Work on `main`; this is a solo project.

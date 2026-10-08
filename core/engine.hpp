@@ -54,6 +54,8 @@ struct Params {
   bool ccOut = false;           // also send expressions as CC ccBase..ccBase+9
   int ccBase = 20;
   float smoothingMs = 50.f;     // expression smoothing
+  float landmarkCutoff = 1.7f;  // One Euro on landmarks: min cutoff Hz (<= 0: off)
+  float landmarkBeta = 20.f;    //   and speed coefficient, per normalized unit/s
 };
 
 struct Output {

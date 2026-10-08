@@ -7,15 +7,18 @@
 
 namespace mh {
 
-// One Euro filter (Casiez et al.). Defaults are the values validated in the
-// 2026 pipeline study (min_cutoff 1.7, beta 0.3, d_cutoff 1.0).
+// One Euro filter (Casiez et al.). Landmarks are in normalized image units,
+// so a moving finger is ~1 unit/s: beta 20 lifts the cutoff to ~20 Hz while
+// moving and keeps ~1.7 Hz smoothing at rest. The study's beta 0.3 barely
+// reacted to motion and delayed note onsets by up to 3 frames
+// (`mh replay --compare`).
 class OneEuro {
  public:
   void reset() { primed_ = false; }
   float apply(float value, double time);
 
   float minCutoff = 1.7f;
-  float beta = 0.3f;
+  float beta = 20.f;
   float dCutoff = 1.0f;
 
  private:
@@ -31,6 +34,8 @@ class LandmarkFilter {
  public:
   Frame apply(const Frame& in);
   void reset();
+  // minCutoff <= 0 passes landmarks through unfiltered.
+  void configure(float minCutoff, float beta);
 
  private:
   std::array<std::array<std::array<OneEuro, 2>, kLandmarks>, kSides> f_{};

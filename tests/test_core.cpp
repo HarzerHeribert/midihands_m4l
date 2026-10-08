@@ -8,6 +8,7 @@
 #include "../core/assign.hpp"
 #include "../core/engine.hpp"
 #include "../core/features.hpp"
+#include "../core/filters.hpp"
 #include "../core/music.hpp"
 #include "../core/preview.hpp"
 
@@ -79,6 +80,30 @@ int count(const std::vector<MidiEvent>& events, uint8_t type) {
 }
 
 }  // namespace
+
+TEST(landmark_filter_follows_motion_and_can_be_off) {
+  // A fingertip moving 1 normalized unit/s at 30 fps: the filter used now
+  // trails by well under a frame of motion, the old setting by several.
+  const auto lagAfter = [](float beta) {
+    OneEuro f;
+    f.beta = beta;
+    float out = 0.f;
+    for (int i = 0; i <= 15; ++i) out = f.apply(i / 30.f, i / 30.0);
+    return 15 / 30.f - out;
+  };
+  CHECK(lagAfter(20.f) < 0.01f);
+  CHECK(lagAfter(0.3f) > 0.05f);
+
+  LandmarkFilter off;
+  off.configure(0.f, 0.f);
+  Frame a, b;
+  a.time = 0.0;
+  b.time = 1.0 / 30.0;
+  a.hands[0].present = b.hands[0].present = true;
+  b.hands[0].lm[8].x = 0.5f;
+  off.apply(a);
+  CHECK(off.apply(b).hands[0].lm[8].x == 0.5f);
+}
 
 TEST(degrees_follow_scale_and_wrap_octaves) {
   Scale major;

@@ -2,6 +2,7 @@
 //
 //   mh cameras                         list cameras and the format midihands picks
 //   mh replay <clip.mp4>... [--phases corpus.yaml] [--layout keys|chords|split]
+//   mh replay <clip.mp4>... --compare      note-onset delay of landmark filter settings
 //                                      run clips through tracking + engine
 //   mh live [camera] [--seconds N] [--instances N]
 //                                      run the live camera through the shared backend
@@ -66,6 +67,75 @@ double percentile(std::vector<double> v, double q) {
 int cmdCameras() {
   for (const CameraInfo& c : listCameras())
     std::printf("%-28s %4dx%-4d @ %5.1f fps  %s\n", c.name.c_str(), c.width, c.height, c.fps, c.uid.c_str());
+  return 0;
+}
+
+// Note-onset delay of landmark filter settings, measured against unfiltered
+// landmarks on the same detections. For each filtered onset the matching
+// unfiltered onset is the latest one of the same finger up to 400 ms before.
+int cmdCompare(const std::vector<std::string>& clips, int layout) {
+  struct Variant { const char* name; float cutoff, beta; };
+  const std::vector<Variant> variants = {
+      {"unfiltered", 0.f, 0.f}, {"1.7 / 0.3", 1.7f, 0.3f}, {"1.7 / 5", 1.7f, 5.f},
+      {"1.7 / 20 (used)", 1.7f, 20.f}, {"1.7 / 50", 1.7f, 50.f}, {"3 / 20", 3.f, 20.f}, {"5 / 50", 5.f, 50.f},
+  };
+  const size_t nv = variants.size();
+  std::vector<std::vector<double>> lags(nv);
+  std::vector<long> onsets(nv, 0), unmatched(nv, 0);
+  for (const std::string& clip : clips) {
+    HandAssigner assigner;
+    std::vector<Engine> engines(nv);
+    std::vector<std::array<std::array<bool, kFingers>, kSides>> was(nv);
+    std::vector<std::vector<std::pair<int, double>>> edges(nv);  // (side * 5 + finger, time)
+    for (size_t v = 0; v < nv; ++v) {
+      Params params;
+      params.layout = layout;
+      params.landmarkCutoff = variants[v].cutoff;
+      params.landmarkBeta = variants[v].beta;
+      std::vector<MidiEvent> ignored;
+      engines[v].setParams(params, ignored);
+      for (auto& side : was[v]) side.fill(false);
+    }
+    std::string error;
+    const bool ok = processMovie(
+        clip,
+        [&](const std::vector<Detection>& dets, double time, float aspect, double, const LumaView&) {
+          const Frame frame = assigner.assign(dets, time, aspect);
+          for (size_t v = 0; v < nv; ++v) {
+            const Output out = engines[v].process(frame);
+            for (int s = 0; s < kSides; ++s)
+              for (int f = Index; f <= Pinky; ++f) {
+                if (out.fingerOn[s][f] && !was[v][s][f]) edges[v].push_back({s * kFingers + f, time});
+                was[v][s][f] = out.fingerOn[s][f];
+              }
+          }
+        },
+        &error);
+    if (!ok) {
+      std::fprintf(stderr, "%s\n", error.c_str());
+      return 1;
+    }
+    for (size_t v = 0; v < nv; ++v) {
+      onsets[v] += static_cast<long>(edges[v].size());
+      for (const auto& [owner, t] : edges[v]) {
+        double best = -1.0;
+        for (const auto& [o0, t0] : edges[0])
+          if (o0 == owner && t0 <= t + 1e-6 && t - t0 <= 0.4) best = std::max(best, t0);
+        if (best < 0.0) ++unmatched[v];
+        else lags[v].push_back((t - best) * 1000.0);
+      }
+    }
+  }
+  std::printf("%-18s %8s %10s %10s %10s %10s\n", "landmark filter", "onsets", "lag p50", "lag p90", "lag mean", "unmatched");
+  for (size_t v = 0; v < nv; ++v) {
+    std::vector<double>& l = lags[v];
+    std::sort(l.begin(), l.end());
+    const auto pct = [&](double q) { return l.empty() ? 0.0 : l[std::min(l.size() - 1, size_t(q * l.size()))]; };
+    double sum = 0.0;
+    for (double x : l) sum += x;
+    std::printf("%-18s %8ld %8.1f ms %8.1f ms %8.1f ms %10ld\n", variants[v].name, onsets[v], pct(0.5), pct(0.9),
+                l.empty() ? 0.0 : sum / l.size(), unmatched[v]);
+  }
   return 0;
 }
 
@@ -241,8 +311,10 @@ int main(int argc, const char** argv) {
     std::string phases, camera;
     double seconds = 10.0;
     int layout = Split, instances = 1;
+    bool compare = false;
     for (size_t i = 1; i < args.size(); ++i) {
-      if (args[i] == "--phases" && i + 1 < args.size()) phases = args[++i];
+      if (args[i] == "--compare") compare = true;
+      else if (args[i] == "--phases" && i + 1 < args.size()) phases = args[++i];
       else if (args[i] == "--seconds" && i + 1 < args.size()) seconds = std::stod(args[++i]);
       else if (args[i] == "--instances" && i + 1 < args.size()) instances = std::stoi(args[++i]);
       else if (args[i] == "--layout" && i + 1 < args.size()) {
@@ -251,6 +323,7 @@ int main(int argc, const char** argv) {
       } else positional.push_back(args[i]);
     }
     if (cmd == "cameras") return cmdCameras();
+    if (cmd == "replay" && compare) return cmdCompare(positional, layout);
     if (cmd == "replay") return cmdReplay(positional, phases, layout);
     if (cmd == "live") return cmdLive(positional.empty() ? "" : positional[0], seconds, instances);
     if (cmd == "snapshot" && positional.size() == 3) return cmdSnapshot(positional[0], std::stol(positional[1]), positional[2]);

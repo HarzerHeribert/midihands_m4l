@@ -97,6 +97,7 @@ void Engine::setParams(const Params& p, std::vector<MidiEvent>& out) {
   if (repitch) panic(out);
   if (p.ccOut != p_.ccOut || p.ccBase != p_.ccBase) lastCc_.fill(-1);
   for (auto& s : smooth_) s.timeConstantMs = p.smoothingMs;
+  filter_.configure(p.landmarkCutoff, p.landmarkBeta);
   p_ = p;
 }
 

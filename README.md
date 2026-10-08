@@ -61,12 +61,18 @@ the mouse is over.
 - Timing & MIDI: minimum note length, dropout hold, movement smoothing, MIDI channel, and
   sending the ten movements as CCs.
 
-**MOVE**
-- Live meters for the ten hand movements (height, x, pinch, fist, tilt of each hand).
-- Eight map slots. **Learn** watches you for three seconds, picks the movement you made and
-  fits the input range to how far you moved; then click any parameter in Live. Or pick the
-  movement yourself and press **Map**. Each slot has an **On** switch (automatable; off lets
-  go of the parameter), input and output ranges and a curve (drag it up or down).
+**MOVE** links hand movements to Live parameters.
+- The ten movements (height, x, pinch, fist, tilt of each hand) with live meters. Each
+  movement lists its links underneath; one movement can drive any number of parameters
+  (16 links in all).
+- To link: click a control in Live (the bar on top shows what is selected), then **+** on a
+  movement. The button names the parameter it will link. With nothing selected it says
+  **Map…** and waits for you to click a parameter.
+- **Learn** watches you for three seconds, picks the movement you made, links it to the
+  selected parameter and fits the input range to how far you moved.
+- Each link: **On** (automatable; off lets go of the parameter), input range, a curve (drag
+  up or down), **Inv** to turn the parameter the other way, output range, and **✕** to remove it.
+- Links are saved with the Set.
 
 Every setting is a Live parameter, saved with the Set; the main ones (layout, hands, scale,
 sensitivity, velocity, map min/max…) can be automated.

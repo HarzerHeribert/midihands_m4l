@@ -18,12 +18,14 @@
     fingertable <24>           mode, degree, octave per finger key
     fingers <40>               per key: note count + 4 notes (-1 = none)
     scaleinfo <root> <steps…>  the scale in use
-    mapname <slot> <name…>     mapped Live parameter, "<none>" when unmapped
-    mapping <slot> <0|1>       slot is waiting for a click in Live
+    mapname <k> <text>         link k's Live parameter ("Drift › Filter Freq"), "<none>" if unlinked
+    mapping <k> <0|1>          link k is waiting for a click in Live
+    selected <text>            the parameter selected in Live, "<none>" if none
   page -> Max (window.max.outlet):
-    set <key> <value>, map <slot>, unmap <slot>, hello
-  Camera data arrives at the camera's frame rate; drawing runs at the display
-  rate and eases toward the latest frame so motion stays smooth.
+    set <key> <value>, link <k> (to the selected parameter, or wait for a click),
+    unlink <k>, hello
+  Camera data arrives at the camera's frame rate and is drawn as it arrives,
+  in step with the picture: no easing, so nothing trails the hand.
   Without Max (opened in a browser) the page runs a demo with fake hands.
 -->
 <style>
@@ -146,36 +148,40 @@ body.notes-off .pads { opacity: .45; }
 .big { font-size: 20px; color: var(--fg-hi); line-height: 1.1; }
 
 /* --- MOVE ---------------------------------------------------------------- */
-#move { grid-template-columns: 250px minmax(0, 1fr); gap: 8px; }
-.meters { padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
-.meters .grp { display: flex; flex-direction: column; gap: 3px; }
-.meter { display: grid; grid-template-columns: 48px 1fr 26px; gap: 6px; align-items: center; height: 18px; padding: 0 2px; }
-.meter.used { background: #2c2c2c; }
-.meter .bar { height: 8px; background: var(--display); border: 1px solid var(--frame); position: relative; }
-.meter .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
-.meter em { font-style: normal; color: var(--dim); text-align: right; }
-.table { display: flex; flex-direction: column; min-height: 0; }
-body.move-off .table { opacity: .5; }
-.thead, .slot { display: grid; grid-template-columns: 20px 34px 104px 46px minmax(110px, 1fr) 70px 104px minmax(100px, 1fr) 40px 18px; gap: 8px; align-items: center; padding: 0 10px; }
-.thead { height: 24px; color: var(--dim); border-bottom: 1px solid var(--frame); }
-.slots { overflow: auto; }
-.slot { height: 58px; border-bottom: 1px solid var(--frame); }
-.slot.disabled > :not(.num):not(.en) { opacity: .4; }
-.slot.learning { background: #3d3226; }
-.slot .num { color: var(--dim); }
-.slot .en { padding: 3px 0; }
-.slot .target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-hi); }
-.slot .target.none { color: var(--dim); }
-.slot .target.listen { color: var(--orange); }
-.slot .x { border: 0; background: none; color: var(--dim); padding: 0; }
-.slot .x:hover { color: var(--fg-hi); }
+#move { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: 34px minmax(0, 1fr); gap: 8px; }
+.movebar { grid-column: 1 / span 2; display: flex; align-items: center; gap: 10px; padding: 0 8px; }
+.movebar .sel { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.movebar .sel b { font-weight: 400; color: var(--fg-hi); }
+.movebar .count { margin-left: auto; color: var(--dim); white-space: nowrap; }
+.hand { overflow: auto; }
+body.move-off .hand { opacity: .5; }
+.hand h4 { padding: 8px 10px 6px; }
+.src { border-top: 1px solid var(--frame); }
+.srow { display: grid; grid-template-columns: 50px minmax(40px, 1fr) 26px minmax(0, 200px); gap: 8px; align-items: center; height: 32px; padding: 0 10px; }
+.srow .bar { height: 8px; background: var(--display); border: 1px solid var(--frame); position: relative; }
+.srow .bar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; }
+.srow em { font-style: normal; color: var(--dim); text-align: right; }
+.srow .add { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .add { color: var(--dim); }
+.srow .add b { font-weight: 400; }
+.srow .add:hover { color: var(--fg-hi); }
+.src.hit .srow { background: #3d3226; }
+.link { display: grid; grid-template-columns: 28px minmax(50px, 1fr) 96px 50px 44px 80px 14px; gap: 6px; align-items: center;
+  height: 38px; padding: 0 10px 0 20px; background: #2f2f2f; border-top: 1px solid #292929; }
+.link.off > :not(.en):not(.x) { opacity: .4; }
+.link .en { padding: 3px 0; }
+.link .target { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg-hi); }
+.link .target.listen { color: var(--orange); }
+.link .inv { padding: 3px 0; }
+.link .x { border: 0; background: none; color: var(--dim); padding: 0; font-size: 12px; }
+.link .x:hover { color: var(--fg-hi); }
 .range { position: relative; height: 18px; }
 .range .tk { position: absolute; left: 0; right: 0; top: 7px; height: 4px; background: var(--display); border: 1px solid var(--frame); }
 .range .sp { position: absolute; top: 7px; height: 4px; background: #6a6a6a; }
 .range.out .sp { background: var(--cyan); }
 .range .now { position: absolute; top: 3px; width: 2px; height: 12px; margin-left: -1px; background: var(--orange); }
 .range .h { position: absolute; top: 2px; width: 7px; height: 14px; margin-left: -3.5px; background: var(--fg); border: 1px solid var(--frame); cursor: ew-resize; }
-.slot canvas { width: 70px; height: 40px; background: var(--display); border: 1px solid var(--frame); cursor: ns-resize; }
+.link canvas { width: 50px; height: 30px; background: var(--display); border: 1px solid var(--frame); cursor: ns-resize; }
 </style>
 </head>
 <body>
@@ -241,11 +247,13 @@ body.move-off .table { opacity: .5; }
   </section>
 
   <section class="page" id="move">
-    <div class="panel meters" id="meters"></div>
-    <div class="panel table">
-      <div class="thead"><span>#</span><span>On</span><span>Movement</span><span></span><span>Input range</span><span>Curve</span><span>Output</span><span>Target</span><span></span><span></span></div>
-      <div class="slots" id="slots"></div>
+    <div class="panel movebar">
+      <button class="tog" id="learnBtn" data-info="Learn: make one movement for 3 seconds. It is linked to the parameter selected in Live, with the range you moved.">Learn</button>
+      <span class="sel" id="selInfo" data-info="Click any control in Live to select it; + on a movement then links to it.">Selected in Live: <b>–</b></span>
+      <span class="count" id="linkCount"></span>
     </div>
+    <div class="panel hand" id="hand0"></div>
+    <div class="panel hand" id="hand1"></div>
   </section>
 </main>
 <div id="info"></div>
@@ -264,24 +272,24 @@ const ROMAN = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"];
 const KEY_NAMES = ["Left pinky","Left ring","Left middle","Left index","Right index","Right middle","Right ring","Right pinky"];
 const KEY_SIDE = [0, 0, 0, 0, 1, 1, 1, 1];
 const KEY_FINGER = [4, 3, 2, 1, 1, 2, 3, 4];   // 1 index .. 4 pinky
-const SLOTS = 8;
+const LINKS = 16;                               // movement -> parameter links, any number per movement
 const LOW_NOTE = 36, HIGH_NOTE = 84;            // keyboard C2..C6
-const EASE_MS = 45;                             // display smoothing toward each camera frame
 const FRAME_MS = 1000 / 61;                     // draw at most ~60 times a second (high-refresh screens ask for 240)
 const COL = { left: [3, 195, 213], right: [255, 173, 86], play: [0, 211, 141] };
 
 // ---- state ------------------------------------------------------------------
 const P = { notes: 1, move: 1, layout: 2, hands: 0, follow: 1, root: 0, scale: 0, sens: 50, vel: 100, velmode: 0, oct: 0,
   minnote: 180, hold: 300, smooth: 50, chan: 1, ccout: 0, ccbase: 20 };
-for (let k = 0; k < SLOTS; k++) Object.assign(P, { [`m${k}on`]: 1, [`m${k}src`]: [5,7,0,3,6,9,1,4][k], [`m${k}lo`]: 0, [`m${k}hi`]: 1,
+for (let k = 0; k < LINKS; k++) Object.assign(P, { [`m${k}on`]: 1, [`m${k}src`]: 0, [`m${k}lo`]: 0, [`m${k}hi`]: 1,
   [`m${k}curve`]: 0, [`m${k}min`]: 0, [`m${k}max`]: 1 });
 const S = {
   target: [null, null], drawn: [null, null], fade: [0, 0], aspect: 16 / 9,
   expr: new Array(10).fill(0), exprDrawn: new Array(10).fill(0),
   table: [[2,0,-1],[2,3,-1],[2,4,-1],[2,5,-1],[1,0,0],[1,1,0],[1,2,0],[1,4,0]],
   notes: [], scaleRoot: 0, scaleSteps: [0,2,4,5,7,9,11], selected: 4,
-  maps: new Array(SLOTS).fill("<none>"), listening: new Array(SLOTS).fill(0),
-  learning: -1, learnMin: null, learnMax: null, learnUntil: 0, camera: "", devices: 1,
+  maps: new Array(LINKS).fill("<none>"), listening: new Array(LINKS).fill(0), pending: new Array(LINKS).fill(false),
+  liveSelected: "<none>",
+  learning: false, learnMin: null, learnMax: null, learnUntil: 0, camera: "", devices: 1,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -293,7 +301,7 @@ function setParam(key, value) { P[key] = value; send("set", key, value); render(
 let infoHover = "", infoMsg = "", infoTimer = 0;
 const IDLE_INFO = {
   play: "Straighten a finger to play its pad; thumbs never play. Hover any control for help.",
-  move: "Learn a movement or pick one, then Map and click a parameter in Live. Switch Movement off to let go of all mapped parameters.",
+  move: "Click a control in Live to select it, then + on a movement to link them. One movement can drive many parameters. ✕ removes a link.",
 };
 function showInfo() {
   const el = $("info"), page = $("play").classList.contains("on") ? "play" : "move";
@@ -337,7 +345,7 @@ function onHands(...a) {
 }
 function onExpr(...v) {
   S.expr = v.slice(0, 10);
-  if (S.learning >= 0) {
+  if (S.learning) {
     S.learnMin = S.learnMin ? S.learnMin.map((m, i) => Math.min(m, v[i])) : v.slice();
     S.learnMax = S.learnMax ? S.learnMax.map((m, i) => Math.max(m, v[i])) : v.slice();
     if (performance.now() > S.learnUntil) finishLearn();
@@ -365,12 +373,17 @@ function onPicture(url) { if ($("picture").getAttribute("src") !== url) $("pictu
 function onFingertable(...a) { for (let k = 0; k < 8; k++) S.table[k] = [a[k * 3], a[k * 3 + 1], a[k * 3 + 2]]; render(); }
 function onFingers(...a) { for (let k = 0; k < 8; k++) { const c = a[k * 5]; S.notes[k] = a.slice(k * 5 + 1, k * 5 + 1 + c); } render(); }
 function onScaleinfo(root, ...steps) { S.scaleRoot = root; S.scaleSteps = steps; buildDegrees(); render(); }
-function onMapname(slot, ...name) { const n = name.join(" ").trim(); S.maps[slot] = n || "<none>"; S.listening[slot] = 0; renderSlots(); if (n && n !== "<none>") message(`Slot ${slot + 1} → ${n}`); }
-function onMapping(slot, on) { S.listening[slot] = on; renderSlots(); }
+function onMapname(k, ...name) {
+  const n = name.join(" ").trim() || "<none>", fresh = S.pending[k] || S.listening[k];
+  S.maps[k] = n; S.pending[k] = false; S.listening[k] = 0; renderLinks();
+  if (fresh && n !== "<none>") message(`${EXPR[P[`m${k}src`]]} → ${n}`);
+}
+function onMapping(k, on) { S.listening[k] = on; if (on) S.pending[k] = false; else if (S.maps[k] === "<none>") S.pending[k] = false; renderLinks(); }
+function onSelected(...name) { S.liveSelected = name.join(" ").trim() || "<none>"; renderLinks(); }
 
 if (MAX) {
   const bind = { param: onParam, hands: onHands, expr: onExpr, status: onStatus, stats: onStats, error: onError, assets: onAssets,
-    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping };
+    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping, selected: onSelected };
   for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
 }
 
@@ -489,46 +502,36 @@ $("ccout").onclick = () => setParam("ccout", P.ccout ? 0 : 1);
 $("handsSeg").onclick = (e) => { const b = e.target.closest("button"); b && setParam("hands", +b.dataset.v); };
 $("velmodeSeg").onclick = (e) => { const b = e.target.closest("button"); b && setParam("velmode", +b.dataset.v); };
 
-// ---- MOVE ----------------------------------------------------------------------------------------
-function buildMeters() {
-  const box = $("meters");
-  box.innerHTML = `<h4>Movements</h4>`;
+// ---- MOVE: links grouped by movement -----------------------------------------------------------
+const EXPR_HELP = ["how high the hand is", "where the hand is, left to right", "how close thumb and index are",
+  "how closed the hand is", "how far the hand is rotated"];
+function buildMove() {
   for (let side = 0; side < 2; side++) {
-    const g = document.createElement("div"); g.className = "grp";
-    g.innerHTML = `<span class="sub">${side ? "Right hand" : "Left hand"}</span>`;
+    const box = $(`hand${side}`);
+    box.innerHTML = `<h4>${side ? "Right hand" : "Left hand"}</h4>`;
     for (let i = 0; i < 5; i++) {
-      const idx = side * 5 + i, m = document.createElement("div");
-      m.className = "meter"; m.id = `meter${idx}`;
-      m.dataset.info = `${EXPR[idx]}: ${["how high the hand is", "where the hand is, left to right", "how close thumb and index are", "how closed the hand is", "how far the hand is rotated"][i]}.`;
-      m.innerHTML = `<span>${EXPR[idx].slice(2)}</span><div class="bar"><i style="background:${side ? "var(--orange)" : "var(--cyan)"}"></i></div><em>0</em>`;
-      g.appendChild(m);
+      const idx = side * 5 + i, src = document.createElement("div");
+      src.className = "src"; src.id = `src${idx}`;
+      src.innerHTML = `<div class="srow" data-info="${EXPR[idx]}: ${EXPR_HELP[i]}.">
+          <span>${EXPR[idx].slice(2)}</span><div class="bar"><i style="background:${side ? "var(--orange)" : "var(--cyan)"}"></i></div><em>0</em>
+          <button class="tog add"></button></div><div class="links"></div>`;
+      src.querySelector(".add").onclick = () => addLink(idx);
+      box.appendChild(src);
     }
-    box.appendChild(g);
   }
-  const tip = document.createElement("div"); tip.className = "sub";
-  tip.textContent = "Learn: make the movement for 3 seconds. The slot takes the movement and its range, then waits for you to click a parameter in Live.";
-  box.appendChild(tip);
-}
-function buildSlots() {
-  const box = $("slots");
-  for (let k = 0; k < SLOTS; k++) {
-    const c = document.createElement("div"); c.className = "slot"; c.id = `slot${k}`;
+  for (let k = 0; k < LINKS; k++) {
+    const c = document.createElement("div"); c.className = "link"; c.id = `link${k}`; c.style.display = "none";
     c.innerHTML = `
-      <span class="num">${k + 1}</span>
-      <button class="tog en" data-info="Slot on/off. Off releases the parameter. Automatable.">On</button>
-      <select class="src" data-info="The movement that drives this slot.">${EXPR.map((n, i) => `<option value="${i}">${n}</option>`).join("")}</select>
-      <button class="tog learn" data-info="Make a movement for 3 seconds: picks it and fits the input range.">Learn</button>
-      <div class="range in" data-info="Input range: the part of the movement that is used. The orange line is the live value."><div class="tk"></div><div class="sp"></div><div class="h lo"></div><div class="h hi"></div><div class="now"></div></div>
-      <canvas width="140" height="80" data-info="Response curve. Drag up or down to bend it, double-click to reset."></canvas>
-      <div class="range out" data-info="Output range: how far the parameter moves. Drag the left handle past the right one to invert."><div class="tk"></div><div class="sp"></div><div class="h lo"></div><div class="h hi"></div></div>
-      <span class="target none" data-info="The Live parameter this slot controls.">–</span>
-      <button class="tog map" data-info="Map: then click any parameter in Live.">Map</button>
-      <button class="x" data-info="Unmap.">✕</button>`;
+      <button class="tog en" data-info="Link on/off. Off lets go of the parameter. Automatable.">On</button>
+      <span class="target" data-info="The Live parameter this link moves."></span>
+      <div class="range in" data-info="Input: the part of the movement that is used. The orange line is where your hand is now."><div class="tk"></div><div class="sp"></div><div class="h lo"></div><div class="h hi"></div><div class="now"></div></div>
+      <canvas width="100" height="60" data-info="Response curve. Drag up or down to bend it, double-click to make it straight."></canvas>
+      <button class="tog inv" data-info="Invert: the movement turns the parameter the other way.">Inv</button>
+      <div class="range out" data-info="Output: how far the parameter moves."><div class="tk"></div><div class="sp"></div><div class="h lo"></div><div class="h hi"></div></div>
+      <button class="x" data-info="Remove this link.">✕</button>`;
     c.querySelector(".en").onclick = () => setParam(`m${k}on`, P[`m${k}on`] ? 0 : 1);
-    c.querySelector(".src").onchange = (e) => setParam(`m${k}src`, +e.target.value);
-    c.querySelector(".learn").onclick = () => startLearn(k);
-    c.querySelector(".map").onclick = () => { send("map", k); message("Click the parameter in Live. If nothing happens, click it once more."); if (!MAX) { S.listening[k] = 1; renderSlots(); } };
-    c.querySelector(".x").onclick = () => { send("unmap", k); if (!MAX) { S.maps[k] = "<none>"; renderSlots(); } };
+    c.querySelector(".inv").onclick = () => { const lo = P[`m${k}min`], hi = P[`m${k}max`]; setParam(`m${k}min`, hi); setParam(`m${k}max`, lo); };
+    c.querySelector(".x").onclick = () => removeLink(k);
     dragHandles(c.querySelector(".range.in"), `m${k}lo`, `m${k}hi`);
     dragHandles(c.querySelector(".range.out"), `m${k}min`, `m${k}max`);
     const cv = c.querySelector("canvas");
@@ -539,8 +542,31 @@ function buildSlots() {
       cv.onpointerup = () => { cv.onpointermove = null; };
     };
     cv.ondblclick = () => setParam(`m${k}curve`, 0);
-    box.appendChild(c);
+    $(`src0`).querySelector(".links").appendChild(c);
   }
+  $("learnBtn").onclick = startLearn;
+}
+const linkUsed = (k) => S.maps[k] !== "<none>" || S.listening[k] || S.pending[k];
+function addLink(src, lo = 0, hi = 1) {
+  const target = S.liveSelected;
+  if (target !== "<none>") {
+    for (let k = 0; k < LINKS; k++)
+      if (S.maps[k] === target && P[`m${k}src`] === src) { message(`${EXPR[src]} already moves ${target}.`); return; }
+  }
+  let k = 0; while (k < LINKS && linkUsed(k)) k++;
+  if (k === LINKS) { message(`All ${LINKS} links are in use. Remove one with ✕.`); return; }
+  for (const [key, v] of [["src", src], ["lo", lo], ["hi", hi], ["curve", 0], ["min", 0], ["max", 1], ["on", 1]]) setParam(`m${k}${key}`, v);
+  S.pending[k] = true;
+  send("link", k);
+  if (!MAX) { if (target !== "<none>") onMapname(k, target); else onMapping(k, 1); }
+  if (target === "<none>") message("Nothing is selected in Live: click the parameter to link.", 6000);
+  renderLinks();
+}
+function removeLink(k) {
+  send("unlink", k);
+  S.pending[k] = false; S.listening[k] = 0;
+  if (!MAX) S.maps[k] = "<none>";
+  renderLinks();
 }
 function dragHandles(range, loKey, hiKey) {
   for (const [cls, key] of [["lo", loKey], ["hi", hiKey]]) {
@@ -552,32 +578,64 @@ function dragHandles(range, loKey, hiKey) {
     };
   }
 }
-function startLearn(k) { S.learning = k; S.learnMin = null; S.learnMax = null; S.learnUntil = performance.now() + 3000; message("Learning: make the movement now.", 3200); renderSlots(); }
+function startLearn() {
+  S.learning = true; S.learnMin = null; S.learnMax = null; S.learnUntil = performance.now() + 3000;
+  $("learnBtn").classList.add("on"); message("Learning: make the movement now.", 3200);
+}
 function finishLearn() {
-  const k = S.learning; S.learning = -1;
+  S.learning = false; $("learnBtn").classList.remove("on");
   let best = -1, span = 0;
   for (let i = 0; i < 10; i++) { const s = S.learnMax[i] - S.learnMin[i]; if (s > span) { span = s; best = i; } }
-  if (best < 0 || span < 0.08) { message("Not enough movement. Try a bigger gesture."); renderSlots(); return; }
-  setParam(`m${k}src`, best);
-  setParam(`m${k}lo`, Math.max(0, Math.round((S.learnMin[best] - .02) * 100) / 100));
-  setParam(`m${k}hi`, Math.min(1, Math.round((S.learnMax[best] + .02) * 100) / 100));
-  if (S.maps[k] === "<none>") { send("map", k); S.listening[k] = 1; message(`Learned ${EXPR[best]}. Now click the parameter in Live.`, 8000); }
-  else message(`Learned ${EXPR[best]}.`);
-  renderSlots();
+  if (best < 0 || span < 0.08) { message("Not enough movement. Try a bigger gesture."); return; }
+  const src = $(`src${best}`); src.classList.add("hit"); setTimeout(() => src.classList.remove("hit"), 1500);
+  addLink(best, Math.max(0, Math.round((S.learnMin[best] - .02) * 100) / 100), Math.min(1, Math.round((S.learnMax[best] + .02) * 100) / 100));
 }
 const shapedX = (k, v) => clamp((v - P[`m${k}lo`]) / Math.max(P[`m${k}hi`] - P[`m${k}lo`], 0.001), 0, 1);
 const curveY = (k, x) => Math.pow(x, Math.pow(2, P[`m${k}curve`] / 50));
 function drawCurve(cv, k, v) {
-  const g = cv.getContext("2d"), w = cv.width, h = cv.height, pd = 8;
+  const g = cv.getContext("2d"), w = cv.width, h = cv.height, pd = 6;
+  const inv = P[`m${k}min`] > P[`m${k}max`], y = (x) => { const c = curveY(k, x); return h - pd - (inv ? 1 - c : c) * (h - 2 * pd); };
   g.clearRect(0, 0, w, h);
-  g.strokeStyle = "#2a2a2a"; g.lineWidth = 1;
-  for (let i = 1; i < 4; i++) { g.beginPath(); g.moveTo(pd + i * (w - 2 * pd) / 4, pd); g.lineTo(pd + i * (w - 2 * pd) / 4, h - pd); g.stroke(); }
   g.strokeStyle = "#03c3d5"; g.lineWidth = 2; g.beginPath();
-  for (let i = 0; i <= 40; i++) { const x = i / 40; g[i ? "lineTo" : "moveTo"](pd + x * (w - 2 * pd), h - pd - curveY(k, x) * (h - 2 * pd)); }
+  for (let i = 0; i <= 30; i++) { const x = i / 30; g[i ? "lineTo" : "moveTo"](pd + x * (w - 2 * pd), y(x)); }
   g.stroke();
   const x = shapedX(k, v);
-  g.fillStyle = "#ffad56"; g.fillRect(pd + x * (w - 2 * pd) - 3, h - pd - curveY(k, x) * (h - 2 * pd) - 3, 6, 6);
+  g.fillStyle = "#ffad56"; g.fillRect(pd + x * (w - 2 * pd) - 3, y(x) - 3, 6, 6);
 }
+function renderLinks() {
+  const sel = S.liveSelected !== "<none>";
+  $("selInfo").innerHTML = `Selected in Live: <b>${sel ? escapeHtml(S.liveSelected) : "nothing – click a control in Live"}</b>`;
+  const counts = new Array(10).fill(0);
+  let used = 0;
+  for (let k = 0; k < LINKS; k++) {
+    const c = $(`link${k}`); if (!c) continue;
+    const show = linkUsed(k), src = P[`m${k}src`];
+    c.style.display = show ? "" : "none";
+    if (!show) continue;
+    used++; counts[src]++;
+    const box = $(`src${src}`).querySelector(".links");
+    if (c.parentNode !== box) box.appendChild(c);
+    c.classList.toggle("off", !P[`m${k}on`]);
+    c.querySelector(".en").classList.toggle("on", !!P[`m${k}on`]);
+    c.querySelector(".inv").classList.toggle("on", P[`m${k}min`] > P[`m${k}max`]);
+    const t = c.querySelector(".target"), waiting = S.listening[k] || (S.pending[k] && S.maps[k] === "<none>");
+    t.textContent = waiting ? "click a parameter in Live…" : S.maps[k];
+    t.classList.toggle("listen", !!waiting);
+    t.title = S.maps[k];
+    for (const [cls, lo, hi] of [[".range.in", P[`m${k}lo`], P[`m${k}hi`]], [".range.out", P[`m${k}min`], P[`m${k}max`]]]) {
+      const r = c.querySelector(cls);
+      r.querySelector(".sp").style.left = `${Math.min(lo, hi) * 100}%`; r.querySelector(".sp").style.width = `${Math.abs(hi - lo) * 100}%`;
+      r.querySelector(".h.lo").style.left = `${lo * 100}%`; r.querySelector(".h.hi").style.left = `${hi * 100}%`;
+    }
+  }
+  for (let i = 0; i < 10; i++) {
+    const b = $(`src${i}`)?.querySelector(".add"); if (!b) continue;
+    b.innerHTML = sel ? `+ <b>${escapeHtml(S.liveSelected)}</b>` : "+ Map…";
+    b.dataset.info = sel ? `Link ${EXPR[i]} to ${S.liveSelected}.` : `Link ${EXPR[i]}: then click the parameter in Live.`;
+  }
+  $("linkCount").textContent = `${used} of ${LINKS} links`;
+}
+const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 // ---- rendering on changes ---------------------------------------------------------------------------
 function render() {
@@ -616,52 +674,23 @@ function render() {
   document.querySelectorAll("#handsSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.hands));
   document.querySelectorAll("#velmodeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.velmode));
   renderDials();
-  renderSlots();
+  renderLinks();
 }
-function renderSlots() {
-  const used = new Set();
-  for (let k = 0; k < SLOTS; k++) {
-    const c = $(`slot${k}`); if (!c) continue;
-    const src = P[`m${k}src`], mapped = S.maps[k] !== "<none>", on = !!P[`m${k}on`];
-    if (mapped && on) used.add(src);
-    c.classList.toggle("learning", S.learning === k);
-    c.classList.toggle("disabled", !on);
-    c.querySelector(".en").classList.toggle("on", on);
-    c.querySelector(".learn").classList.toggle("on", S.learning === k);
-    if (document.activeElement !== c.querySelector(".src")) c.querySelector(".src").value = src;
-    const t = c.querySelector(".target");
-    t.textContent = S.listening[k] ? "click a parameter…" : mapped ? S.maps[k] : "–";
-    t.className = "target" + (S.listening[k] ? " listen" : mapped ? "" : " none");
-    c.querySelector(".map").classList.toggle("on", !!S.listening[k]);
-    c.querySelector(".x").style.visibility = mapped ? "visible" : "hidden";
-    for (const [sel, lo, hi] of [[".range.in", P[`m${k}lo`], P[`m${k}hi`]], [".range.out", P[`m${k}min`], P[`m${k}max`]]]) {
-      const r = c.querySelector(sel);
-      r.querySelector(".sp").style.left = `${Math.min(lo, hi) * 100}%`; r.querySelector(".sp").style.width = `${Math.abs(hi - lo) * 100}%`;
-      r.querySelector(".h.lo").style.left = `${lo * 100}%`; r.querySelector(".h.hi").style.left = `${hi * 100}%`;
-    }
-  }
-  for (let i = 0; i < 10; i++) { const el = $(`meter${i}`); if (el) el.classList.toggle("used", used.has(i)); }
-}
-
 // ---- animation: every display frame, easing toward the latest camera frame ---------------------
 const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 function sizeCanvas() { const cv = $("overlay"), r = cv.getBoundingClientRect(); cv.width = Math.max(1, r.width * devicePixelRatio); cv.height = Math.max(1, r.height * devicePixelRatio); }
 window.addEventListener("resize", sizeCanvas);
 let last = performance.now();
 function step(dt) {
-  const a = 1 - Math.exp(-dt / EASE_MS);
   for (let s = 0; s < 2; s++) {
     const t = S.target[s];
-    if (t) {
-      if (!S.drawn[s]) S.drawn[s] = { pts: t.pts.map((p) => p.slice()), on: t.on };
-      else { S.drawn[s].pts.forEach((p, i) => { p[0] += (t.pts[i][0] - p[0]) * a; p[1] += (t.pts[i][1] - p[1]) * a; }); S.drawn[s].on = t.on; }
-      S.fade[s] = Math.min(1, S.fade[s] + dt / 100);
-    } else if (S.drawn[s]) {
-      S.fade[s] = Math.max(0, S.fade[s] - dt / 180);
+    if (t) { S.drawn[s] = t; S.fade[s] = 1; }   // appear at once, exactly where the hand is
+    else if (S.drawn[s]) {                       // a lost hand fades out briefly
+      S.fade[s] = Math.max(0, S.fade[s] - dt / 150);
       if (S.fade[s] === 0) S.drawn[s] = null;
     }
   }
-  for (let i = 0; i < 10; i++) S.exprDrawn[i] += ((S.expr[i] || 0) - S.exprDrawn[i]) * Math.min(1, a * 1.5);
+  for (let i = 0; i < 10; i++) S.exprDrawn[i] = S.expr[i] || 0;
 }
 function drawOverlay() {
   const cv = $("overlay"), g = cv.getContext("2d"), W = cv.width, H = cv.height, dpr = devicePixelRatio;
@@ -704,9 +733,13 @@ function frame(now) {
     document.querySelectorAll(".key").forEach((k) => k.classList.toggle("pl", playing.has(+k.dataset.note)));
     document.querySelectorAll(".pad").forEach((p) => { const k = +p.dataset.key, h = S.target[KEY_SIDE[k]]; p.classList.toggle("playing", !!(P.notes && h && h.on[KEY_FINGER[k]])); });
   } else {
-    for (let i = 0; i < 10; i++) { const el = $(`meter${i}`), v = S.exprDrawn[i]; el.querySelector("i").style.width = `${v * 100}%`; el.querySelector("em").textContent = Math.round(v * 100); }
-    for (let k = 0; k < SLOTS; k++) {
-      const c = $(`slot${k}`), v = S.exprDrawn[P[`m${k}src`]] || 0;
+    for (let i = 0; i < 10; i++) {
+      const row = $(`src${i}`), v = S.exprDrawn[i];
+      row.querySelector(".bar i").style.width = `${v * 100}%`; row.querySelector("em").textContent = Math.round(v * 100);
+    }
+    for (let k = 0; k < LINKS; k++) {
+      if (!linkUsed(k)) continue;
+      const c = $(`link${k}`), v = S.exprDrawn[P[`m${k}src`]] || 0;
       c.querySelector(".now").style.left = `${v * 100}%`;
       drawCurve(c.querySelector("canvas"), k, v);
     }
@@ -728,7 +761,10 @@ function demoResolve() {
 }
 function demo() {
   onStatus("running", "Demo camera", 1280, 720, 30, 1);
-  S.maps[0] = "Drift: LP Freq"; S.maps[1] = "Reverb: Dry/Wet";
+  S.liveSelected = "Drift › Filter Freq";
+  for (const [k, src, name, inv] of [[0, 5, "Drift › LP Freq", 0], [1, 5, "Reverb › Dry/Wet", 0], [2, 7, "Drift › Res", 1]]) {
+    S.maps[k] = name; P[`m${k}src`] = src; if (inv) { P[`m${k}min`] = 1; P[`m${k}max`] = 0; }
+  }
   demoResolve(); render();
   const hand = (cx, cy, open, mirror) => {
     const pts = [[cx, cy + .2]];
@@ -752,7 +788,7 @@ function demo() {
 }
 
 // ---- boot -----------------------------------------------------------------------------------------------
-buildDials(); buildPads(); buildDegrees(); buildKeyboard(); buildMeters(); buildSlots(); render(); sizeCanvas(); showInfo(); requestAnimationFrame(frame);
+buildDials(); buildPads(); buildDegrees(); buildKeyboard(); buildMove(); render(); sizeCanvas(); showInfo(); requestAnimationFrame(frame);
 if (MAX) send("hello"); else demo();
 if (location.hash === "#move") $("tabs").querySelector('[data-page="move"]').click();
 </script>

@@ -30,8 +30,18 @@ float OneEuro::apply(float value, double time) {
   return value_;
 }
 
+void LandmarkFilter::configure(float minCutoff, float beta) {
+  for (auto& side : f_)
+    for (auto& lm : side)
+      for (auto& axis : lm) {
+        axis.minCutoff = minCutoff;
+        axis.beta = beta;
+      }
+}
+
 Frame LandmarkFilter::apply(const Frame& in) {
   Frame out = in;
+  if (f_[0][0][0].minCutoff <= 0.f) return out;
   for (int s = 0; s < kSides; ++s) {
     if (!in.hands[s].present) {
       for (auto& lm : f_[s])
