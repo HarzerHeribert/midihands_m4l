@@ -5,6 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-09
+
 ### Added
 - Clutch gestures: a link can move its parameter always, or only while you hold a gesture:
   thumb out, thumb in, a fist, or the pinky up, of either hand. Let go and the parameter
