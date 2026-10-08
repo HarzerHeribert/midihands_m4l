@@ -5,6 +5,8 @@ the format follows [Keep a Changelog](https://keepachangelog.com).
 
 ## [Unreleased]
 
+## [0.3.0-beta.1] - 2026-10-08
+
 ### Added
 - Windows version (beta): the same devices and editor, with hand tracking on Google's
   MediaPipe hand models (ONNX Runtime) instead of Apple Vision; it matches the official
