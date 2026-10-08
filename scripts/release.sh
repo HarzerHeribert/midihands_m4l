@@ -1,11 +1,12 @@
 #!/bin/bash
 # Prepares release X.Y.Z: version bump, changelog, local release build, commit and tag.
-# Usage: scripts/release.sh 0.2.0   (then: git push origin main v0.2.0)
+# Usage: scripts/release.sh 0.2.0   (then: git push origin main v0.2.0); 0.3.0-beta.1 for a pre-release
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 v="${1:-}"; v="${v#v}"
-[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: scripts/release.sh X.Y.Z" >&2; exit 2; }
+# X.Y.Z, or a pre-release like X.Y.Z-beta.1 (published as a GitHub pre-release).
+[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "usage: scripts/release.sh X.Y.Z[-beta.N]" >&2; exit 2; }
 [ "$(git rev-parse --abbrev-ref HEAD)" = "main" ] || { echo "release from main" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "commit or stash your changes first" >&2; exit 1; }
 git rev-parse -q --verify "refs/tags/v$v" >/dev/null && { echo "v$v already exists" >&2; exit 1; }
