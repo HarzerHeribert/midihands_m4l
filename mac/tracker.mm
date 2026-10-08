@@ -48,6 +48,7 @@ LumaView lumaOf(CVPixelBufferRef pixels) {
   v.width = int(CVPixelBufferGetWidthOfPlane(pixels, 0));
   v.height = int(CVPixelBufferGetHeightOfPlane(pixels, 0));
   v.stride = int(CVPixelBufferGetBytesPerRowOfPlane(pixels, 0));
+  v.native = pixels;
   return v;
 }
 

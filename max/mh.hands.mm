@@ -22,6 +22,7 @@
 //   report: resend version, assets url, status, picture and finger layout (an editor page
 //     opened), and check GitHub for a newer release
 //   checkupdate, update: check for / install the latest release (mac/updater)
+//   record 1 <x> <y> <w> <h> | record 0, reveal: record the video window (mac/recorder)
 //
 // Outlets, left to right:
 //   0 MIDI bytes as 3-int lists, for [midiout]
@@ -29,8 +30,10 @@
 //   2 drawing data for the hand views: "hands" aspect + 2 x (present, 21 x/y, 4 finger states)
 //   3 info: cameras, status, stats, error, picture <url>, assets <url> (Live's fonts),
 //      version <x.y.z>, update available|current|unknown|installing|installed|failed [text],
+//      recording 0|1, recorded <path>, recordfail <why>,
 //      fingertable <8 x mode degree octave>, fingers <8 x count + 4 notes>,
 //      scaleinfo <root> <intervals...>
+#import <AppKit/AppKit.h>
 #include "ext.h"
 #include "ext_obex.h"
 
@@ -44,6 +47,7 @@
 #include "../core/version.hpp"
 #include "../mac/camera_hub.hpp"
 #include "../mac/preview_server.hpp"
+#include "../mac/recorder.hpp"
 #include "../mac/updater.hpp"
 
 namespace {
@@ -87,6 +91,8 @@ struct State {
   // Update check / install result, handed to the main thread by updateQelem.
   std::string update;      // "available", "current", "unknown", "installing", "installed", "failed"
   std::string updateText;  // version or reason
+  // Info messages from other threads (recorder), sent by infoQelem.
+  std::vector<std::pair<std::string, std::string>> pendingInfo;
 };
 
 }  // namespace
@@ -102,6 +108,7 @@ typedef struct _mh_hands {
   t_qelem* layoutQelem;
   t_qelem* accessQelem;
   t_qelem* updateQelem;
+  t_qelem* infoQelem;
   t_symbol* pendingCamera;
   long pendingCameraIndex;
   long subscription;  // CameraHub subscriber id, 0 while closed
@@ -322,6 +329,55 @@ static void mh_setUpdate(t_mh_hands* x, const std::string& state, const std::str
   qelem_set(x->updateQelem);
 }
 
+// Main thread: info messages queued by background callbacks.
+static void mh_infoOut(t_mh_hands* x) {
+  std::vector<std::pair<std::string, std::string>> items;
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    items.swap(x->st->pendingInfo);
+  }
+  for (const auto& [selector, text] : items) {
+    t_atom a;
+    atom_setsym(&a, gensym(text.c_str()));
+    mh_info(x, selector.c_str(), text.empty() ? 0 : 1, &a);
+  }
+}
+
+static void mh_post(t_mh_hands* x, const std::string& selector, const std::string& text) {
+  std::lock_guard<std::mutex> alive(gAliveMutex);
+  if (!gAlive.count(x)) return;
+  {
+    std::lock_guard<std::mutex> lock(x->st->mutex);
+    x->st->pendingInfo.emplace_back(selector, text);
+  }
+  qelem_set(x->infoQelem);
+}
+
+// record 1 <x> <y> <w> <h>: record that part of the video window with Live's
+// sound; record 0: stop and save. reveal: show the last recording in Finder.
+static void mh_record(t_mh_hands* x, t_symbol*, long argc, t_atom* argv) {
+  const bool on = argc > 0 && atom_getlong(argv) != 0;
+  if (on && argc >= 5) {
+    mh::Recorder::shared().start("MidiHands Video", atom_getfloat(argv + 1), atom_getfloat(argv + 2),
+                                 atom_getfloat(argv + 3), atom_getfloat(argv + 4), [x](bool ok, const std::string& msg) {
+                                   if (ok) mh_post(x, "recording", "1");
+                                   else mh_post(x, "recordfail", msg);
+                                 });
+  } else if (!on) {
+    mh::Recorder::shared().stop([x](bool ok, const std::string& msg) {
+      mh_post(x, "recording", "0");
+      mh_post(x, ok ? "recorded" : "recordfail", msg);
+    });
+  }
+}
+
+static void mh_reveal(t_mh_hands*) {
+  const std::string file = mh::Recorder::shared().lastFile();
+  if (file.empty()) return;
+  NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:file.c_str()]];
+  [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[ url ]];
+}
+
 static void mh_checkupdate(t_mh_hands* x) {
   mh::checkForUpdate([x](const mh::UpdateCheck& r) {
     if (!r.ok) mh_setUpdate(x, "unknown", r.error);
@@ -523,6 +579,7 @@ static void* mh_new(t_symbol*, long, t_atom*) {
   x->layoutQelem = qelem_new(x, reinterpret_cast<method>(mh_layout));
   x->accessQelem = qelem_new(x, reinterpret_cast<method>(mh_start));
   x->updateQelem = qelem_new(x, reinterpret_cast<method>(mh_updateOut));
+  x->infoQelem = qelem_new(x, reinterpret_cast<method>(mh_infoOut));
   x->pendingCamera = gensym("");
   x->pendingCameraIndex = -1;
   x->subscription = 0;
@@ -540,6 +597,7 @@ static void mh_free(t_mh_hands* x) {
   if (x->subscription) mh::CameraHub::shared().unsubscribe(x->subscription);  // no callbacks after this
   qelem_free(x->accessQelem);
   qelem_free(x->updateQelem);
+  qelem_free(x->infoQelem);
   qelem_free(x->viewQelem);
   qelem_free(x->layoutQelem);
   object_free(x->flushClock);
@@ -560,6 +618,8 @@ void ext_main(void*) {
   class_addmethod(c, reinterpret_cast<method>(mh_report), "report", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_checkupdate), "checkupdate", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_update), "update", 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_record), "record", A_GIMME, 0);
+  class_addmethod(c, reinterpret_cast<method>(mh_reveal), "reveal", 0);
   class_addmethod(c, reinterpret_cast<method>(mh_scale), "scale", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_anything), "anything", A_GIMME, 0);
   class_addmethod(c, reinterpret_cast<method>(mh_assist), "assist", A_CANT, 0);

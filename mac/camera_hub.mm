@@ -123,13 +123,17 @@ void CameraHub::onFrame(Camera& cam, const std::vector<Detection>& dets, double 
     std::lock_guard<std::mutex> d(cam.dispatch);
     for (const auto& [id, callback] : cam.subscribers) callback(hf);
   }
-  // The picture costs a downscale and a JPEG encode, so only while an
-  // editor is actually showing this camera.
+  // The picture costs a downscale and a JPEG encode, so only while a page
+  // is actually showing this camera; in color when the frame is available.
   PreviewServer& server = PreviewServer::shared();
   if (server.hasClients(cam.stream)) {
-    const int w = kPreviewWidth;
-    const int h = std::max(1, int(w / std::max(0.1f, aspect)));
-    server.publish(cam.stream, mirroredThumbnail(luma, w, h));
+    const int w = std::min(std::max(server.requestedWidth(cam.stream), kPreviewWidth), std::max(luma.width, kPreviewWidth));
+    if (luma.native) {
+      server.publishPixels(cam.stream, luma.native, w);
+    } else {
+      const int h = std::max(1, int(w / std::max(0.1f, aspect)));
+      server.publish(cam.stream, mirroredThumbnail(luma, w, h));
+    }
   }
 }
 

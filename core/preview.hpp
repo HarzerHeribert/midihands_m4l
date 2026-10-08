@@ -16,6 +16,7 @@ struct LumaView {
   int width = 0;
   int height = 0;
   int stride = 0;  // bytes per row
+  const void* native = nullptr;  // the full color frame (CVPixelBufferRef on macOS), if any
 };
 
 struct GrayImage {

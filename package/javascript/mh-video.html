@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MidiHands Video</title>
+<!--
+  The video window: camera, effects and hands at full size, for watching,
+  projecting (fullscreen on any display) and recording. Shown by a jweb in the
+  device's "MidiHands Video" window; the settings come from the editor's
+  Live parameters, so both always show the same.
+
+  Max -> page: param <key> <value>, hands ..., expr ..., picture <url>, status ...,
+               recording <0|1>, recorded <path>, recordfail <why>, recreq (toggle recording)
+  page -> Max: hello, set <key> <value>, record 1 <x> <y> <w> <h> | record 0,
+               fullscreen 1 <left> <top> <right> <bottom> | fullscreen 0
+-->
+<style>
+:root { --fg: #b5b5b5; --hi: #e2e2e2; --dim: #757575; --orange: #ffad56; --alert: #e76942; --frame: #111; --control: #1e1e1e; }
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 11px/1.3 "AbletonSansSmall", -apple-system, sans-serif; color: var(--fg); user-select: none; -webkit-user-select: none; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#bar { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; align-items: center; padding: 6px; background: rgba(36, 36, 36, .92);
+  border: 1px solid var(--frame); transition: opacity .25s; }
+body.idle #bar { opacity: 0; }
+.seg { display: flex; border: 1px solid var(--frame); background: var(--control); }
+.seg button, .tog { border: 0; border-right: 1px solid var(--frame); background: transparent; color: var(--fg); padding: 4px 9px; font: inherit; }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--orange); color: #070707; }
+.tog { border: 1px solid var(--frame); background: var(--control); }
+.tog.rec.on { background: var(--alert); color: #fff; }
+#toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 6px 12px; background: rgba(36, 36, 36, .95); border: 1px solid var(--frame); color: var(--hi); opacity: 0; transition: opacity .3s; }
+#toast.on { opacity: 1; }
+#nogl { position: absolute; inset: 0; display: none; place-items: center; color: var(--dim); }
+</style>
+</head>
+<body>
+<img id="picture" alt="" crossorigin="anonymous" style="display:none">
+<canvas id="gl"></canvas>
+<div id="nogl">This window needs WebGL2.</div>
+<div id="bar">
+  <div class="seg" id="fmtSeg" title="Format"><button data-v="0">16:9</button><button data-v="1">9:16</button><button data-v="2">1:1</button><button data-v="3">4:5</button></div>
+  <div class="seg" id="lookSeg" title="Hands"><button data-v="0">No hands</button><button data-v="1">Lines</button><button data-v="2">Jelly</button></div>
+  <button class="tog" id="fullBtn" title="Fill the screen this window is on (Esc leaves)">Fullscreen</button>
+  <button class="tog rec" id="recBtn" title="Record this window with Live's sound to Movies/MidiHands">● Rec</button>
+</div>
+<div id="toast"></div>
+
+<script src="mh-gl.js"></script>
+<script src="mh-fx.js"></script>
+<script>
+"use strict";
+const MAX = typeof window.max !== "undefined";
+const $ = (id) => document.getElementById(id);
+const send = (...a) => { if (MAX) window.max.outlet(...a); };
+const LOOKS = ["off", "lines", "jelly"], THEMES = ["live", "amber"];
+const P = { vlook: 2, vtheme: 0, vcam: 1, vfxh: 1, vcues: 1, vfmt: 0, notes: 1 };
+for (let s = 0; s < 4; s++) {
+  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1 });
+  for (let k = 0; k < 6; k++) P[`x${s}p${k}`] = 0.5;
+  for (let j = 0; j < 7; j++) Object.assign(P, { [`x${s}m${j}s`]: 0, [`x${s}m${j}a`]: 0.5 });
+}
+const S = { hands: [null, null], fade: [0, 0], expr: new Array(10).fill(0), recording: false, recStart: 0, full: false, url: "" };
+
+const R = window.MHGL ? MHGL.create($("gl")) : null;
+if (R) R.setSource($("picture")); else $("nogl").style.display = "grid";
+
+let toastTimer = 0;
+function toast(text, ms = 4000) { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), ms); }
+function render() {
+  document.querySelectorAll("#fmtSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.vfmt));
+  document.querySelectorAll("#lookSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.vlook));
+  $("recBtn").classList.toggle("on", S.recording); if (!S.recording) $("recBtn").textContent = "● Rec";
+  $("fullBtn").classList.toggle("on", S.full);
+  document.body.classList.toggle("recording", S.recording);
+}
+
+// ---- from Max -------------------------------------------------------------------------------
+function onParam(key, value) { if (key in P) { P[key] = value; render(); } }
+function onHands(...a) {
+  let n = 1;
+  for (let s = 0; s < 2; s++) {
+    const present = a[n++] > 0.5, pts = [];
+    for (let i = 0; i < 21; i++) { pts.push([a[n], a[n + 1]]); n += 2; }
+    const on = [false, a[n] > .5, a[n + 1] > .5, a[n + 2] > .5, a[n + 3] > .5]; n += 4;
+    S.hands[s] = present ? { pts, on } : null;
+  }
+}
+function onExpr(...v) { S.expr = v.slice(0, 10); }
+// A sharper picture than the editor's: as wide as this window, up to 1920.
+function pictureUrl() { return S.url ? `${S.url}?w=${Math.min(1920, Math.max(640, Math.round(innerWidth * devicePixelRatio / 320) * 320))}` : ""; }
+function onPicture(url) { S.url = url; const u = pictureUrl(); if ($("picture").getAttribute("src") !== u) $("picture").src = u; }
+function onStatus(...a) { if (a[0] !== "running") { $("picture").removeAttribute("src"); S.url = ""; } }
+function onRecording(on) { S.recording = !!+on; S.recStart = performance.now(); render(); }
+function onRecorded(...path) { S.recording = false; render(); toast(`Saved ${path.join(" ").replace(/^.*\/Movies\//, "Movies/")} — press F to show it in Finder`, 10000); }
+function onRecordfail(...why) { S.recording = false; render(); toast(`Recording failed: ${why.join(" ")}`, 12000); }
+function onRecreq() { toggleRecording(); }
+if (MAX) {
+  const bind = { param: onParam, hands: onHands, expr: onExpr, picture: onPicture, status: onStatus,
+    recording: onRecording, recorded: onRecorded, recordfail: onRecordfail, recreq: onRecreq };
+  for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
+}
+
+// ---- controls ---------------------------------------------------------------------------------
+function toggleRecording() {
+  if (S.recording) { send("record", 0); return; }
+  if (!R) return;
+  // Only the picture, in this window's points (the recorder adds the title bar).
+  const c = R.content();
+  send("record", 1, Math.round(c.x), Math.round(c.y), Math.round(c.w), Math.round(c.h));
+  if (!MAX) { S.recording = true; S.recStart = performance.now(); render(); }
+}
+function toggleFullscreen() {
+  S.full = !S.full;
+  const sc = window.screen, l = sc.availLeft ?? 0, t = sc.availTop ?? 0;
+  if (S.full) send("fullscreen", 1, l, t, l + sc.width, t + sc.height); else send("fullscreen", 0);
+  render();
+}
+for (const [id, key] of [["fmtSeg", "vfmt"], ["lookSeg", "vlook"]])
+  $(id).onclick = (e) => { const b = e.target.closest("button"); if (!b) return; P[key] = +b.dataset.v; send("set", key, +b.dataset.v); render(); };
+$("recBtn").onclick = toggleRecording;
+$("fullBtn").onclick = toggleFullscreen;
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && S.full) toggleFullscreen();
+  if (e.key === "r" && !e.metaKey) toggleRecording();
+  if (e.key === "f" && !e.metaKey) send("reveal");
+});
+// The bar hides itself while the mouse rests (and never shows in recordings: it sits outside
+// the picture only when there is room, so it fades out).
+let idleTimer = 0;
+const wake = () => { document.body.classList.remove("idle"); clearTimeout(idleTimer); idleTimer = setTimeout(() => document.body.classList.add("idle"), 1800); };
+addEventListener("mousemove", wake); wake();
+addEventListener("resize", () => { if (S.url) onPicture(S.url); });
+
+// ---- drawing --------------------------------------------------------------------------------------
+let last = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!R || now - last < 1000 / 61) return;
+  const dt = now - last; last = now;
+  for (let s = 0; s < 2; s++) S.fade[s] = S.hands[s] ? 1 : Math.max(0, S.fade[s] - dt / 150);
+  const used = MHFX.sources(P);
+  Object.assign(R.options, {
+    look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: P.vcues ? [...used] : [],
+    camera: P.vcam, grade: "none", fxOnHands: !!P.vfxh, aspect: MHFX.FORMATS[P.vfmt] || 16 / 9, brackets: false,
+  });
+  R.setHands(S.hands); R.setExpr(S.expr); R.setFx(MHFX.slots(P, S.expr));
+  R.render(now / 1000);
+  if (S.recording) {
+    const sec = Math.floor((now - S.recStart) / 1000);
+    $("recBtn").textContent = `■ Stop ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+  }
+}
+requestAnimationFrame(frame);
+render();
+
+// ---- demo (opened in a browser) ---------------------------------------------------------------------
+if (!MAX) {
+  const OPEN = [[0, 0], [-.07, -.04], [-.13, -.09], [-.17, -.15], [-.19, -.21], [-.07, -.21], [-.085, -.31], [-.09, -.37], [-.095, -.42],
+    [-.01, -.22], [-.01, -.33], [-.01, -.40], [-.01, -.45], [.05, -.205], [.06, -.30], [.065, -.36], [.07, -.41], [.10, -.18], [.12, -.25], [.13, -.29], [.14, -.33]];
+  const hand = (wx, wy, size, mirror, open, tilt) => {
+    const pts = OPEN.map((p) => p.slice());
+    for (let f = 1; f <= 4; f++) if (!open[f]) {
+      const [mx, my] = OPEN[4 * f + 1], dx = OPEN[4 * f + 2][0] - mx;
+      pts[4 * f + 2] = [mx + dx * .5, my - .05]; pts[4 * f + 3] = [mx + dx * .3, my - .025]; pts[4 * f + 4] = [mx + dx * .1, my + .025];
+    }
+    const c = Math.cos(tilt), s = Math.sin(tilt);
+    return pts.map(([x, y]) => [wx + (x * c - y * s) * size * mirror / (16 / 9), wy + (x * s + y * c) * size]);
+  };
+  const at = (id) => MHFX.list.findIndex((f) => f.id === id) + 1;
+  P.x0fx = at("kaleido"); MHFX.byId.kaleido.knobs.forEach((k, i) => { P[`x0p${i}`] = k.def; }); P.x0p4 = 1; P.x0m3s = 8; P.x0m3a = 0.6;
+  P.x1fx = at("glow"); MHFX.byId.glow.knobs.forEach((k, i) => { P[`x1p${i}`] = k.def; });
+  render();
+  let t = 0;
+  setInterval(() => {
+    t += .1;
+    const lo = [false, true, Math.sin(t * .9) > -.2, false, false], ro = [false, true, Math.sin(t * 1.3) > 0, false, true];
+    S.hands = [{ pts: hand(.33 + Math.sin(t * .5) * .03, .97, 1.55, -1, lo, -.1), on: lo }, { pts: hand(.67, .95 + Math.cos(t * .7) * .03, 1.55, 1, ro, .08 + Math.sin(t) * .05), on: ro }];
+    S.expr = [.5 + Math.sin(t) * .3, .3, .2, .1, .5, .5 + Math.cos(t * .7) * .3, .7, (Math.sin(t) + 1) / 2, .2, .55];
+  }, 66);
+}
+if (MAX) send("hello");
+</script>
+</body>
+</html>

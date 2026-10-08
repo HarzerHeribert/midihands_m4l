@@ -1,5 +1,7 @@
 #include "preview_server.hpp"
 
+#import <CoreImage/CoreImage.h>
+#import <CoreVideo/CoreVideo.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <Network/Network.h>
@@ -17,6 +19,7 @@ namespace {
 struct Client {
   nw_connection_t connection;
   std::string stream;
+  int width = 640;  // ?w= in the request
   std::atomic<bool> busy{false};
 };
 
@@ -48,6 +51,9 @@ dispatch_data_t dataFrom(const std::string& s) {
 
 struct PreviewServer::Impl {
   dispatch_queue_t queue = dispatch_queue_create("midihands.preview", DISPATCH_QUEUE_SERIAL);
+  dispatch_queue_t encoder = dispatch_queue_create("midihands.preview.encode", DISPATCH_QUEUE_SERIAL);
+  std::atomic<bool> encoding{false};
+  CIContext* context = [CIContext contextWithOptions:@{kCIContextCacheIntermediates : @NO}];
   nw_listener_t listener = nil;
   uint16_t port = 0;
   bool started = false;
@@ -138,6 +144,9 @@ struct PreviewServer::Impl {
                               return;
                             }
                             client->stream = request.substr(a + 5, b - a - 5);
+                            const size_t w = request.find("?w=", b);
+                            if (w != std::string::npos && w < request.find(' ', b))
+                              client->width = std::clamp(std::atoi(request.c_str() + w + 3), 160, 1920);
                             const std::string header =
                                 "HTTP/1.1 200 OK\r\n"
                                 "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
@@ -173,6 +182,62 @@ bool PreviewServer::hasClients(const std::string& stream) const {
   for (const auto& c : impl_->clients)
     if (c->stream == stream) return true;
   return false;
+}
+
+// Sends one encoded frame to every client of `stream` that is not still busy.
+static void sendJpeg(PreviewServer::Impl* impl, const std::string& stream, NSData* jpeg) {
+  std::vector<std::shared_ptr<Client>> ready;
+  {
+    std::lock_guard<std::mutex> lock(impl->mutex);
+    for (const auto& c : impl->clients)
+      if (c->stream == stream && !c->busy) ready.push_back(c);
+  }
+  if (ready.empty()) return;
+  const std::string head = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " +
+                           std::to_string(jpeg.length) + "\r\n\r\n";
+  NSData* keepJpeg = jpeg;
+  dispatch_data_t body = dispatch_data_create(keepJpeg.bytes, keepJpeg.length, nullptr, ^{ (void)keepJpeg; });
+  dispatch_data_t part = dispatch_data_create_concat(dispatch_data_create_concat(dataFrom(head), body), dataFrom("\r\n"));
+  for (const auto& c : ready) {
+    c->busy = true;
+    std::shared_ptr<Client> keep = c;
+    nw_connection_send(c->connection, part, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, false, ^(nw_error_t error) {
+      keep->busy = false;
+      if (error) nw_connection_cancel(keep->connection);
+    });
+  }
+}
+
+int PreviewServer::requestedWidth(const std::string& stream) const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  int width = 0;
+  for (const auto& c : impl_->clients)
+    if (c->stream == stream) width = std::max(width, c->width);
+  return width;
+}
+
+void PreviewServer::publishPixels(const std::string& stream, const void* pixelBuffer, int width) {
+  if (!pixelBuffer || width <= 0 || impl_->encoding.exchange(true)) return;
+  CVPixelBufferRef pixels = CVPixelBufferRetain((CVPixelBufferRef)pixelBuffer);
+  Impl* impl = impl_.get();
+  dispatch_async(impl->encoder, ^{
+    @autoreleasepool {
+      CIImage* image = [CIImage imageWithCVPixelBuffer:pixels];
+      const CGRect extent = image.extent;
+      const double scale = double(width) / std::max(1.0, double(extent.size.width));
+      // Mirror like the tracker's coordinates, then scale.
+      CGAffineTransform t = CGAffineTransformMakeTranslation(extent.size.width, 0);
+      t = CGAffineTransformScale(t, -1, 1);
+      image = [[image imageByApplyingTransform:t] imageByApplyingTransform:CGAffineTransformMakeScale(scale, scale)];
+      CGColorSpaceRef srgb = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+      NSData* jpeg = [impl->context JPEGRepresentationOfImage:image colorSpace:srgb
+                                                       options:@{(id)kCGImageDestinationLossyCompressionQuality : @0.8}];
+      CGColorSpaceRelease(srgb);
+      CVPixelBufferRelease(pixels);
+      if (jpeg) sendJpeg(impl, stream, jpeg);
+    }
+    impl->encoding = false;
+  });
 }
 
 void PreviewServer::publish(const std::string& stream, const GrayImage& image) {

@@ -15,6 +15,7 @@
     status / stats / error     camera state
     assets <url>               local server base: /font/<file> serves Live's fonts
     version <x.y.z>            this build
+    recording <0|1> / recorded <path> / recordfail <why>   the video window's recorder
     update <state> [text]      available <v> | current | unknown | installing | installed | failed <why>
     picture <url>              MJPEG stream of the camera, loopback only
     fingertable <24>           mode, degree, octave per finger key
@@ -25,7 +26,8 @@
     selected <text>            the parameter selected in Live, "<none>" if none
   page -> Max (window.max.outlet):
     set <key> <value>, link <k> (to the selected parameter, or wait for a click),
-    unlink <k>, hello, update (install the latest release)
+    unlink <k>, hello, update (install the latest release),
+    video (open the video window), record (start/stop recording it)
   Camera data arrives at the camera's frame rate and is drawn as it arrives,
   in step with the picture: no easing, so nothing trails the hand.
   Without Max (opened in a browser) the page runs a demo with fake hands.
@@ -107,6 +109,8 @@ h4 { margin: 0; font-size: 11px; font-weight: 700; color: var(--fg-hi); }
 .lcd { position: relative; background: var(--display); border: 1px solid var(--frame); overflow: hidden; }
 .lcd img, .lcd canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .lcd img { filter: grayscale(1) brightness(.55) contrast(1.1); opacity: .9; }
+body.gl .lcd img { display: none; }      /* the picture is drawn by WebGL (mh-gl.js) */
+.lcd canvas.gl { position: absolute; inset: 0; width: 100%; height: 100%; }
 .lcd .empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); }
 .lcd .badge { position: absolute; left: 8px; top: 8px; padding: 2px 6px; background: var(--control); border: 1px solid var(--frame); color: var(--dim); display: none; }
 body.notes-off .lcd .badge { display: block; }
@@ -153,6 +157,34 @@ body.notes-off .pads { opacity: .45; }
 .dials { display: flex; justify-content: space-around; }
 .big { font-size: 20px; color: var(--fg-hi); line-height: 1.1; }
 
+/* --- FX ------------------------------------------------------------------ */
+#fx { grid-template-columns: minmax(0, 1fr) 470px; grid-template-rows: minmax(0, 1fr); gap: 8px; }
+.fxleft { display: flex; flex-direction: column; min-height: 0; }
+.fxbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--frame); }
+.fxbar .k { color: var(--dim); margin-left: 4px; }
+.fxbar .seg button { padding: 3px 8px; }
+.fxbar .rec.on { background: var(--alert); color: #fff; }
+.fxbar .spacer { flex: 1; }
+#fxStage { flex: 1; margin: 8px; }
+.fxslots { display: flex; flex-direction: column; gap: 8px; overflow: auto; min-height: 0; }
+.fxcard { padding: 8px 10px 10px; }
+.fxhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.fxhead .num { color: var(--dim); width: 34px; }
+.fxhead select { flex: 1; }
+.fxcard.empty .fxknobs { display: none; }
+.fxknobs { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.fxknob { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.fxknob .dial { width: 100%; }
+.fxknob .dial span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 62px; font-size: 10px; }
+.fxknob .modsrc { width: 58px; font-size: 9px; padding: 1px 12px 1px 3px; min-height: 16px; background-position: calc(100% - 7px) 6px, calc(100% - 4px) 6px; }
+.fxknob .modsrc.on { color: var(--orange); }
+.modamt { position: relative; width: 52px; height: 8px; background: var(--display); border: 1px solid var(--frame); cursor: ew-resize; visibility: hidden; }
+.modamt.on { visibility: visible; }
+.modamt::before { content: ""; position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--dim); }
+.modamt i { position: absolute; top: 0; bottom: 0; background: var(--orange); }
+.dial .mod { fill: var(--orange); display: none; }
+.dial.modded .mod { display: block; }
+
 /* --- MOVE ---------------------------------------------------------------- */
 #move { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: 34px minmax(0, 1fr); gap: 8px; }
 .movebar { grid-column: 1 / span 2; display: flex; align-items: center; gap: 10px; padding: 0 8px; }
@@ -193,7 +225,7 @@ body.move-off .hand { opacity: .5; }
 <body>
 <header>
   <span class="title">MidiHands</span><span class="ver" id="ver"></span>
-  <div class="seg" id="tabs"><button data-page="play" class="on" data-info="Play: what your fingers play.">Play</button><button data-page="move" data-info="Move: map hand movements to any parameter in Live.">Move</button></div>
+  <div class="seg" id="tabs"><button data-page="play" class="on" data-info="Play: what your fingers play.">Play</button><button data-page="move" data-info="Move: map hand movements to any parameter in Live.">Move</button><button data-page="fx" data-info="FX: video effects driven by your hands, the video window and recording.">FX</button></div>
   <div class="master">
     <button class="tog" id="notesTog" data-info="Notes on/off. Off: fingers play nothing, movements keep working. Automatable and mappable.">Notes</button>
     <button class="tog" id="moveTog" data-info="Movement on/off. Off: mapped parameters are released (turn them by hand, automation plays) and no CC is sent. Automatable and mappable.">Movement</button>
@@ -205,7 +237,8 @@ body.move-off .hand { opacity: .5; }
 <main>
   <section class="page on" id="play">
     <div class="lcd" id="stage" data-info="Camera picture. Left hand cyan, right hand orange; a finger that plays turns green.">
-      <img id="picture" alt="">
+      <img id="picture" alt="" crossorigin="anonymous">
+      <canvas id="gl" class="gl"></canvas>
       <canvas id="overlay"></canvas>
       <div class="badge">Notes off</div>
       <div class="empty" id="stageEmpty">Switch the camera on in the device.</div>
@@ -253,6 +286,28 @@ body.move-off .hand { opacity: .5; }
     </div>
   </section>
 
+  <section class="page" id="fx">
+    <div class="panel fxleft">
+      <div class="fxbar">
+        <span class="k">Hands</span>
+        <div class="seg" id="lookSeg"><button data-v="0" data-info="No hands drawn in the video.">Off</button><button data-v="1" data-info="Hands as gel lines and joints.">Lines</button><button data-v="2" data-info="Hands as glossy jelly shapes.">Jelly</button></div>
+        <div class="seg" id="themeSeg"><button data-v="0" data-info="Live's cyan and orange.">Live</button><button data-v="1" data-info="The amber colors of the original midihands app.">Amber</button></div>
+        <button class="tog" id="fxHandsTog" data-info="Effects also change the drawn hands (off: hands stay clean on top).">FX on hands</button>
+        <button class="tog" id="cuesTog" data-info="Show which movements drive something: pinch bands, sliders and gauges on the hands.">Cues</button>
+        <span class="spacer"></span>
+        <span class="k">Format</span>
+        <div class="seg" id="fmtSeg"><button data-v="0" data-info="16:9 landscape (YouTube, screens).">16:9</button><button data-v="1" data-info="9:16 portrait (Reels, Stories, TikTok).">9:16</button><button data-v="2" data-info="1:1 square.">1:1</button><button data-v="3" data-info="4:5 portrait feed post.">4:5</button></div>
+        <button class="tog" id="videoBtn" data-info="Open the video window: full size, fullscreen on any display, record from there.">Video window</button>
+        <button class="tog rec" id="recBtn" data-info="Record the video window with Live's sound as an MP4 in Movies/MidiHands.">● Rec</button>
+      </div>
+      <div class="lcd" id="fxStage" data-info="Preview of the video: camera, effects and hands, in the chosen format."></div>
+      <div class="dials" style="padding:0 10px 8px; justify-content:flex-start; gap:12px">
+        <div class="dial" data-key="vcam" data-min="0" data-max="1" data-def="1" data-fmt="pct1" data-name="Camera" data-info="How much of the camera picture shows (0: only hands and effects on black)."></div>
+      </div>
+    </div>
+    <div class="fxslots" id="fxSlots"></div>
+  </section>
+
   <section class="page" id="move">
     <div class="panel movebar">
       <button class="tog" id="learnBtn" data-info="Learn: make one movement for 3 seconds. It is linked to the parameter selected in Live, with the range you moved.">Learn</button>
@@ -265,6 +320,8 @@ body.move-off .hand { opacity: .5; }
 </main>
 <div id="info"></div>
 
+<script src="mh-gl.js"></script>
+<script src="mh-fx.js"></script>
 <script>
 "use strict";
 const MAX = typeof window.max !== "undefined";
@@ -289,6 +346,12 @@ const P = { notes: 1, move: 1, layout: 2, hands: 0, follow: 1, root: 0, scale: 0
   minnote: 180, hold: 300, smooth: 50, chan: 1, ccout: 0, ccbase: 20 };
 for (let k = 0; k < LINKS; k++) Object.assign(P, { [`m${k}on`]: 1, [`m${k}src`]: 0, [`m${k}lo`]: 0, [`m${k}hi`]: 1,
   [`m${k}curve`]: 0, [`m${k}min`]: 0, [`m${k}max`]: 1 });
+for (let s = 0; s < 4; s++) {
+  Object.assign(P, { [`x${s}fx`]: 0, [`x${s}mix`]: 1 });
+  for (let k = 0; k < 6; k++) P[`x${s}p${k}`] = 0.5;
+  for (let j = 0; j < 7; j++) Object.assign(P, { [`x${s}m${j}s`]: 0, [`x${s}m${j}a`]: 0.5 });
+}
+Object.assign(P, { vlook: 2, vtheme: 0, vcam: 1, vfxh: 1, vcues: 1, vfmt: 0 });
 const S = {
   target: [null, null], drawn: [null, null], fade: [0, 0], aspect: 16 / 9,
   expr: new Array(10).fill(0), exprDrawn: new Array(10).fill(0),
@@ -296,7 +359,7 @@ const S = {
   notes: [], scaleRoot: 0, scaleSteps: [0,2,4,5,7,9,11], selected: 4,
   maps: new Array(LINKS).fill("<none>"), listening: new Array(LINKS).fill(0), pending: new Array(LINKS).fill(false),
   liveSelected: "<none>",
-  learning: false, learnMin: null, learnMax: null, learnUntil: 0, camera: "", devices: 1,
+  learning: false, learnMin: null, learnMax: null, learnUntil: 0, camera: "", devices: 1, recording: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -387,6 +450,9 @@ function onUpdate(state, text = "") {
   if (state === "failed") { b.textContent = S.latest ? `Update to ${S.latest}` : "Update"; message(`Update failed: ${text}`, 15000); }
 }
 $("updBtn").onclick = () => send("update");
+function onRecording(on) { S.recording = !!+on; renderFxBar(); if (S.recording) message("Recording the video window…", 3000); }
+function onRecorded(...path) { S.recording = false; renderFxBar(); message(`Saved ${path.join(" ").replace(/^.*\/Movies\//, "Movies/")}`, 10000); }
+function onRecordfail(...why) { S.recording = false; renderFxBar(); message(`Recording failed: ${why.join(" ")}`, 15000); }
 function onPicture(url) { if ($("picture").getAttribute("src") !== url) $("picture").src = url; }
 function onFingertable(...a) { for (let k = 0; k < 8; k++) S.table[k] = [a[k * 3], a[k * 3 + 1], a[k * 3 + 2]]; render(); }
 function onFingers(...a) { for (let k = 0; k < 8; k++) { const c = a[k * 5]; S.notes[k] = a.slice(k * 5 + 1, k * 5 + 1 + c); } render(); }
@@ -401,7 +467,8 @@ function onSelected(...name) { S.liveSelected = name.join(" ").trim() || "<none>
 
 if (MAX) {
   const bind = { param: onParam, hands: onHands, expr: onExpr, status: onStatus, stats: onStats, error: onError, assets: onAssets,
-    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping, selected: onSelected, version: onVersion, update: onUpdate };
+    picture: onPicture, fingertable: onFingertable, fingers: onFingers, scaleinfo: onScaleinfo, mapname: onMapname, mapping: onMapping, selected: onSelected, version: onVersion, update: onUpdate,
+    recording: onRecording, recorded: onRecorded, recordfail: onRecordfail };
   for (const [k, f] of Object.entries(bind)) window.max.bindInlet(k, f);
 }
 
@@ -410,6 +477,9 @@ $("tabs").onclick = (e) => {
   const page = e.target.dataset.page; if (!page) return;
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.page === page));
   document.querySelectorAll(".page").forEach((p) => p.classList.toggle("on", p.id === page));
+  // One WebGL canvas, shown in whichever page needs it.
+  if (page === "fx") $("fxStage").appendChild($("gl"));
+  else $("stage").insertBefore($("gl"), $("overlay"));
   sizeCanvas();
   showInfo();
 };
@@ -423,24 +493,30 @@ function arc(f) {
   const p = (a) => `${17 + r * Math.cos(a)} ${17 + r * Math.sin(a)}`;
   return `M ${p(a0)} A ${r} ${r} 0 ${SWEEP * f > 180 ? 1 : 0} 1 ${p(a1)}`;
 }
-const FMT = { pct: (v) => `${Math.round(v)} %`, int: (v) => `${Math.round(v)}`, ms: (v) => `${Math.round(v)} ms`, oct: (v) => (v > 0 ? "+" : "") + Math.round(v) };
-function buildDials() {
-  document.querySelectorAll(".dial").forEach((d) => {
-    const key = d.dataset.key, lo = +d.dataset.min, hi = +d.dataset.max, step = +(d.dataset.step || 0);
-    d.innerHTML = `<span>${d.dataset.name}</span><svg viewBox="0 0 34 34"><path class="tr" d="${arc(1)}"/><path class="vl"/><line class="pt" x1="17" y1="17" x2="17" y2="6"/></svg><output></output>`;
-    d.onpointerdown = (e) => {
-      d.setPointerCapture(e.pointerId);
-      const y0 = e.clientY, v0 = P[key];
-      d.onpointermove = (m) => {
-        let v = clamp(v0 + (y0 - m.clientY) * (hi - lo) / (m.shiftKey ? 600 : 150), lo, hi);
-        v = step ? Math.round(v / step) * step : Math.round(v);
-        if (v !== P[key]) setParam(key, v);
-      };
-      d.onpointerup = () => { d.onpointermove = null; };
+const FMT = { pct: (v) => `${Math.round(v)} %`, pct1: (v) => `${Math.round(v * 100)} %`, int: (v) => `${Math.round(v)}`,
+  ms: (v) => `${Math.round(v)} ms`, oct: (v) => (v > 0 ? "+" : "") + Math.round(v) };
+function makeDial(d) {
+  const key = d.dataset.key, lo = +d.dataset.min, hi = +d.dataset.max, step = +(d.dataset.step || 0);
+  const fine = hi - lo <= 2;   // 0..1 ranges move in hundredths, not whole numbers
+  const snap = (v) => step ? Math.round(v / step) * step : fine ? Math.round(v * 100) / 100 : Math.round(v);
+  d.innerHTML = `<span>${d.dataset.name}</span><svg viewBox="0 0 34 34"><path class="tr" d="${arc(1)}"/><path class="vl"/><line class="pt" x1="17" y1="17" x2="17" y2="6"/><circle class="mod" r="2.6" cx="17" cy="3"/></svg><output></output>`;
+  d.onpointerdown = (e) => {
+    d.setPointerCapture(e.pointerId);
+    const y0 = e.clientY, v0 = P[d.dataset.key];
+    d.onpointermove = (m) => {
+      const v = snap(clamp(v0 + (y0 - m.clientY) * (hi - lo) / (m.shiftKey ? 600 : 150), lo, hi));
+      if (v !== P[d.dataset.key]) setParam(d.dataset.key, v);
     };
-    d.ondblclick = () => setParam(key, +d.dataset.def);
-    d.onwheel = (e) => { e.preventDefault(); setParam(key, clamp(P[key] - Math.sign(e.deltaY) * (step || Math.max(1, (hi - lo) / 100)), lo, hi)); };
-  });
+    d.onpointerup = () => { d.onpointermove = null; };
+  };
+  d.ondblclick = () => setParam(d.dataset.key, +d.dataset.def);
+  d.onwheel = (e) => { e.preventDefault(); setParam(d.dataset.key, snap(clamp(P[d.dataset.key] - Math.sign(e.deltaY) * (step || (fine ? (hi - lo) / 100 : Math.max(1, (hi - lo) / 100))), lo, hi))); };
+}
+function buildDials() { document.querySelectorAll(".dial").forEach(makeDial); }
+// A dot on a dial where gesture modulation has moved its value (FX knobs).
+function setModMarker(d, f) {
+  const c = d.querySelector(".mod"), a = (-SWEEP / 2 + SWEEP * clamp(f, 0, 1)) * Math.PI / 180;
+  c.setAttribute("cx", 17 + 14 * Math.sin(a)); c.setAttribute("cy", 17 - 14 * Math.cos(a));
 }
 function renderDials() {
   document.querySelectorAll(".dial").forEach((d) => {
@@ -655,6 +731,90 @@ function renderLinks() {
 }
 const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+// ---- FX: four effect slots, every control movable by a hand movement -----------------------
+const LOOKS = ["off", "lines", "jelly"], THEMES = ["live", "amber"];
+function buildFx() {
+  const box = $("fxSlots");
+  const options = `<option value="0">— no effect —</option>` + MHFX.GROUPS.map((g) => `<optgroup label="${g}">` +
+    MHFX.list.map((fx, i) => [fx, i]).filter(([fx]) => fx.group === g).map(([fx, i]) => `<option value="${i + 1}">${fx.name}</option>`).join("") + "</optgroup>").join("");
+  const sources = `<option value="0">no mod</option>` + EXPR.map((n, i) => `<option value="${i + 1}">${n}</option>`).join("");
+  for (let s = 0; s < MHFX.SLOTS; s++) {
+    const c = document.createElement("div"); c.className = "panel fxcard"; c.id = `fxs${s}`;
+    c.innerHTML = `<div class="fxhead"><span class="num">FX ${s + 1}</span><select class="fxsel" data-info="The effect in this slot. Effects run top to bottom.">${options}</select></div><div class="fxknobs"></div>`;
+    c.querySelector(".fxsel").onchange = (e) => chooseEffect(s, +e.target.value);
+    const knobs = c.querySelector(".fxknobs");
+    for (let j = 0; j < 7; j++) {
+      const key = j === 0 ? `x${s}mix` : `x${s}p${j - 1}`;
+      const cell = document.createElement("div"); cell.className = "fxknob";
+      cell.innerHTML = `<div class="dial" data-key="${key}" data-min="0" data-max="1" data-def="${j === 0 ? 1 : 0.5}" data-fmt="pct1" data-name="${j === 0 ? "Mix" : ""}"></div>
+        <select class="modsrc" data-info="A hand movement that moves this control.">${sources}</select>
+        <div class="modamt" data-info="How far the movement moves it: right adds, left subtracts. Double-click: 0."><i></i></div>`;
+      knobs.appendChild(cell);
+      makeDial(cell.querySelector(".dial"));
+      cell.querySelector(".modsrc").onchange = (e) => setParam(`x${s}m${j}s`, +e.target.value);
+      const amt = cell.querySelector(".modamt");
+      amt.onpointerdown = (e) => {
+        amt.setPointerCapture(e.pointerId);
+        const move = (m) => { const r = amt.getBoundingClientRect(); setParam(`x${s}m${j}a`, Math.round(clamp((m.clientX - r.left) / r.width * 2 - 1, -1, 1) * 100) / 100); };
+        move(e); amt.onpointermove = move; amt.onpointerup = () => { amt.onpointermove = null; };
+      };
+      amt.ondblclick = () => setParam(`x${s}m${j}a`, 0);
+    }
+    box.appendChild(c);
+  }
+  for (const [id, key] of [["lookSeg", "vlook"], ["themeSeg", "vtheme"], ["fmtSeg", "vfmt"]])
+    $(id).onclick = (e) => { const b = e.target.closest("button"); if (b) setParam(key, +b.dataset.v); };
+  $("fxHandsTog").onclick = () => setParam("vfxh", P.vfxh ? 0 : 1);
+  $("cuesTog").onclick = () => setParam("vcues", P.vcues ? 0 : 1);
+  $("videoBtn").onclick = () => { send("video"); if (!MAX) message("The video window opens in Live."); };
+  $("recBtn").onclick = () => { send("record"); if (!MAX) { S.recording = !S.recording; renderFxBar(); } };
+}
+function chooseEffect(s, index) {
+  setParam(`x${s}fx`, index);
+  const fx = MHFX.list[index - 1];
+  if (fx) fx.knobs.forEach((k, i) => setParam(`x${s}p${i}`, k.def));
+  message(fx ? `FX ${s + 1}: ${fx.name}` : `FX ${s + 1} is empty.`);
+}
+function renderFxBar() {
+  document.querySelectorAll("#lookSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.vlook));
+  document.querySelectorAll("#themeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.vtheme));
+  document.querySelectorAll("#fmtSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.vfmt));
+  $("fxHandsTog").classList.toggle("on", !!P.vfxh); $("cuesTog").classList.toggle("on", !!P.vcues);
+  $("recBtn").classList.toggle("on", S.recording); $("recBtn").textContent = S.recording ? "■ Stop" : "● Rec";
+}
+function renderFx() {
+  if (!$("fxSlots").children.length) return;
+  renderFxBar();
+  for (let s = 0; s < MHFX.SLOTS; s++) {
+    const c = $(`fxs${s}`), fx = MHFX.list[(P[`x${s}fx`] | 0) - 1];
+    c.querySelector(".fxsel").value = P[`x${s}fx`] | 0;
+    c.classList.toggle("empty", !fx);
+    c.querySelectorAll(".fxknob").forEach((cell, j) => {
+      const name = j === 0 ? "Mix" : (fx && fx.knobs[j - 1] ? fx.knobs[j - 1].name : "");
+      cell.style.visibility = fx && name ? "" : "hidden";
+      cell.querySelector(".dial span").textContent = name;
+      cell.querySelector(".dial").dataset.info = fx ? `${fx.name}: ${name}. Drag up/down, double-click resets.` : "";
+      const src = P[`x${s}m${j}s`] | 0, amt = P[`x${s}m${j}a`] || 0;
+      const sel = cell.querySelector(".modsrc"); sel.value = src; sel.classList.toggle("on", src > 0);
+      const bar = cell.querySelector(".modamt"), i = bar.querySelector("i");
+      bar.classList.toggle("on", src > 0);
+      i.style.left = `${50 + Math.min(0, amt) * 50}%`; i.style.width = `${Math.abs(amt) * 50}%`;
+      cell.querySelector(".dial").classList.toggle("modded", src > 0);
+    });
+  }
+}
+// Every frame on the FX page: where modulation has moved each modulated control.
+function updateFxMarkers() {
+  for (let s = 0; s < MHFX.SLOTS; s++) {
+    if (!(P[`x${s}fx`] | 0)) continue;
+    $(`fxs${s}`).querySelectorAll(".fxknob").forEach((cell, j) => {
+      if (!(P[`x${s}m${j}s`] | 0)) return;
+      const key = j === 0 ? `x${s}mix` : `x${s}p${j - 1}`;
+      setModMarker(cell.querySelector(".dial"), MHFX.modulated(P, S.exprDrawn, s, j, P[key]));
+    });
+  }
+}
+
 // ---- rendering on changes ---------------------------------------------------------------------------
 function render() {
   $("notesTog").classList.toggle("on", !!P.notes); $("moveTog").classList.toggle("on", !!P.move);
@@ -693,6 +853,7 @@ function render() {
   document.querySelectorAll("#velmodeSeg button").forEach((b) => b.classList.toggle("on", +b.dataset.v === P.velmode));
   renderDials();
   renderLinks();
+  renderFx();
 }
 // ---- animation: every display frame, easing toward the latest camera frame ---------------------
 const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
@@ -740,12 +901,52 @@ function drawOverlay() {
     g.globalAlpha = 1;
   }
 }
+// WebGL picture (mh-gl.js); null when WebGL2 is missing, then the 2D overlay draws instead.
+const R = window.MHGL ? MHGL.create($("gl")) : null;
+if (R) { document.body.classList.add("gl"); R.setSource($("picture")); }
+// Movements that drive something (Move links and FX), shown as cues on the hands.
+function cueList() {
+  const used = window.MHFX ? MHFX.sources(P) : new Set();
+  for (let k = 0; k < LINKS; k++) if (S.maps[k] !== "<none>" && P[`m${k}on`]) used.add(P[`m${k}src`]);
+  return P.vcues ? [...used] : [];
+}
+function renderPicture(fxPage, time) {
+  const hands = S.drawn.map((h) => h && { pts: h.pts, on: h.on.map((v, f) => !!(v && (fxPage || P.notes))) });
+  Object.assign(R.options, {
+    look: LOOKS[P.vlook] || "jelly", theme: THEMES[P.vtheme] || "live", cues: cueList(),
+    camera: fxPage ? P.vcam : 0.6, grade: fxPage ? "none" : "play", fxOnHands: !!P.vfxh,
+    aspect: fxPage ? MHFX.FORMATS[P.vfmt] || 0 : 0, brackets: !!P.vcues,
+  });
+  R.setHands(hands); R.setExpr(S.exprDrawn);
+  R.setFx(fxPage ? MHFX.slots(P, S.exprDrawn) : []);
+  R.render(time);
+}
+// Note labels above the fingertips, on the 2D overlay.
+function drawLabels() {
+  const cv = $("overlay"), g = cv.getContext("2d"), dpr = devicePixelRatio;
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.font = `${11 * dpr}px AbletonSansSmall, -apple-system, sans-serif`; g.textBaseline = "middle"; g.textAlign = "center";
+  for (let s = 0; s < 2; s++) {
+    const hand = S.drawn[s]; if (!hand) continue;
+    g.globalAlpha = S.fade[s];
+    for (let f = 1; f <= 4; f++) {
+      const key = s ? 3 + f : 4 - f, [x, y] = R.toCss(hand.pts[4 * f + 4]).map((v) => v * dpr), playing = P.notes && hand.on[f];
+      const label = keyLabel(key), tw = g.measureText(label).width + 10 * dpr, th = 16 * dpr, lx = x - tw / 2, ly = y - 34 * dpr;
+      g.fillStyle = playing ? "rgb(0,211,141)" : "rgba(24,24,24,.85)"; g.fillRect(lx, ly, tw, th);
+      g.fillStyle = playing ? "#070707" : "#e2e2e2"; g.fillText(label, x, ly + th / 2 + dpr);
+    }
+    g.globalAlpha = 1;
+  }
+}
 function frame(now) {
   if (now - last < FRAME_MS) { requestAnimationFrame(frame); return; }
   const dt = Math.min(100, now - last); last = now;
   step(dt);
-  if ($("play").classList.contains("on")) {
-    drawOverlay();
+  if ($("fx").classList.contains("on")) {
+    if (R) renderPicture(true, now / 1000);
+    updateFxMarkers();
+  } else if ($("play").classList.contains("on")) {
+    if (R) { renderPicture(false, now / 1000); drawLabels(); } else drawOverlay();
     const playing = new Set();
     for (let s = 0; s < 2; s++) { const h = S.target[s]; if (!h || !P.notes) continue; for (let f = 1; f <= 4; f++) if (h.on[f]) (S.notes[s ? 3 + f : 4 - f] || []).forEach((n) => playing.add(n)); }
     document.querySelectorAll(".key").forEach((k) => k.classList.toggle("pl", playing.has(+k.dataset.note)));
@@ -795,6 +996,12 @@ function demo() {
   $("picture").src = demoBackdrop();
   onStatus("running", "iPhone Camera", 1280, 720, 60, 1);   // demo: what a 60 fps camera reports
   S.liveSelected = "Drift › Filter Freq";
+  if (window.MHFX) {
+    const at = (id) => MHFX.list.findIndex((f) => f.id === id) + 1;
+    Object.assign(P, { x0fx: at("edges"), x1fx: at("glow"), x2fx: at("rgbsplit"), x2m1s: 8, x2m1a: 0.8 });
+    for (const [s, id] of [[0, "edges"], [1, "glow"], [2, "rgbsplit"]]) MHFX.byId[id].knobs.forEach((k, i) => { P[`x${s}p${i}`] = k.def; });
+    P.x0p4 = 0.55;
+  }
   for (const [k, src, name, inv] of [[0, 5, "Drift › LP Freq", 0], [1, 5, "Reverb › Dry/Wet", 0], [2, 7, "Drift › Res", 1]]) {
     S.maps[k] = name; P[`m${k}src`] = src; if (inv) { P[`m${k}min`] = 1; P[`m${k}max`] = 0; }
   }
@@ -832,9 +1039,9 @@ function demo() {
 }
 
 // ---- boot -----------------------------------------------------------------------------------------------
-buildDials(); buildPads(); buildDegrees(); buildKeyboard(); buildMove(); render(); sizeCanvas(); showInfo(); requestAnimationFrame(frame);
+buildDials(); buildPads(); buildDegrees(); buildKeyboard(); buildMove(); if (window.MHFX) buildFx(); render(); sizeCanvas(); showInfo(); requestAnimationFrame(frame);
 if (MAX) send("hello"); else demo();
-if (location.hash === "#move") $("tabs").querySelector('[data-page="move"]').click();
+for (const page of ["move", "fx"]) if (location.hash === `#${page}`) $("tabs").querySelector(`[data-page="${page}"]`).click();
 </script>
 </body>
 </html>

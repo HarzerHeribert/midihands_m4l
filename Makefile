@@ -16,12 +16,13 @@ CXXFLAGS  := -std=c++17 -O2 -Wall -Wextra -Wno-unused-parameter -DMH_VERSION='"$
 OBJCFLAGS := -fobjc-arc -mmacosx-version-min=$(MACOS_MIN)
 FRAMEWORKS := -framework Foundation -framework AVFoundation -framework CoreMedia \
               -framework CoreVideo -framework Vision -framework Network -framework ImageIO \
-              -framework CoreGraphics -framework UniformTypeIdentifiers
+              -framework CoreGraphics -framework UniformTypeIdentifiers -framework CoreImage \
+              -framework AppKit -framework ScreenCaptureKit
 
 CORE_SRC := $(wildcard core/*.cpp)
 CORE_HDR := $(wildcard core/*.hpp)
-MAC_SRC  := mac/tracker.mm mac/camera_hub.mm mac/preview_server.mm mac/updater.mm
-MAC_HDR  := mac/tracker.hpp mac/camera_hub.hpp mac/preview_server.hpp mac/updater.hpp
+MAC_SRC  := mac/tracker.mm mac/camera_hub.mm mac/preview_server.mm mac/updater.mm mac/recorder.mm
+MAC_HDR  := mac/tracker.hpp mac/camera_hub.hpp mac/preview_server.hpp mac/updater.hpp mac/recorder.hpp
 
 PACKAGE  := package
 EXTERNAL := $(PACKAGE)/externals/mh.hands.mxo

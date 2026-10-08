@@ -27,6 +27,7 @@ replaces the "---" prefix with an id unique to each device instance:
 from __future__ import annotations
 
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -38,6 +39,15 @@ SCALES = ["Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Locri
           "Blues", "Chromatic"]  # order = max/mh.hands.mm scaleTypes()
 NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 LINKS = 16  # movement -> Live parameter links; any number may share a movement
+FX_SLOTS = 4  # video effect chain length; each slot: effect, mix, six knobs, a modulation per control
+VIDEO_SIZE = (960.0, 540.0)
+FORMATS = ["16:9", "9:16", "1:1", "4:5"]
+
+
+def effect_names() -> list[str]:
+    """Effect names in the order of package/javascript/mh-fx.js (the effect menu's order)."""
+    src = (Path(__file__).resolve().parent.parent / "package" / "javascript" / "mh-fx.js").read_text()
+    return [m.group(2) for m in re.finditer(r'add\("([a-z0-9]+)", "([^"]+)", "([A-Za-z]+)"', src)]
 
 EDITOR_SIZE = (1200.0, 760.0)
 VERSION = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()
@@ -55,7 +65,7 @@ PORTS = {
     "s": (1, 0, []), "r": (0, 1, [""]), "inlet": (0, 1, [""]),
     "expr": (2, 1, [""]), "change": (1, 3, ["", "int", "int"]), "thispatcher": (1, 2, ["", ""]),
     "onebang": (2, 2, ["bang", "bang"]), "absolutepath": (1, 1, [""]),
-    "v8": (1, 1, [""]),
+    "v8": (1, 1, [""]), "metro": (2, 1, ["bang"]), "delay": (2, 1, ["bang"]),
 }
 
 
@@ -220,6 +230,28 @@ def stored_params() -> list[tuple]:
             (f"m{k}min", f"Link {k + 1} Min", "float", 0, 1, 0.0, 0, None),
             (f"m{k}max", f"Link {k + 1} Max", "float", 0, 1, 1.0, 0, None),
         ]
+    params += [
+        ("vlook", "Hands Look", "enum", 0, 2, 2, 0, ["Off", "Lines", "Jelly"]),
+        ("vtheme", "Hands Colors", "enum", 0, 1, 0, 1, ["Live", "Amber"]),
+        ("vcam", "Camera Level", "float", 0, 1, 1.0, 0, None),
+        ("vfxh", "FX On Hands", "enum", 0, 1, 1, 1, ["off", "on"]),
+        ("vcues", "Gesture Cues", "enum", 0, 1, 1, 1, ["off", "on"]),
+        ("vfmt", "Video Format", "enum", 0, 3, 0, 1, FORMATS),
+    ]
+    effects = ["None"] + effect_names()
+    for s in range(FX_SLOTS):
+        n = s + 1
+        params += [
+            (f"x{s}fx", f"FX{n} Effect", "enum", 0, len(effects) - 1, 0, 0, effects),
+            (f"x{s}mix", f"FX{n} Mix", "float", 0, 1, 1.0, 0, None),
+        ]
+        params += [(f"x{s}p{k}", f"FX{n} Knob {k + 1}", "float", 0, 1, 0.5, 0, None) for k in range(6)]
+        for j in range(7):  # 0 = mix, 1..6 = knobs
+            what = "Mix" if j == 0 else f"Knob {j}"
+            params += [
+                (f"x{s}m{j}s", f"FX{n} {what} Mod Source", "enum", 0, 10, 0, 1, ["None"] + EXPRESSIONS),
+                (f"x{s}m{j}a", f"FX{n} {what} Mod Amount", "float", -1, 1, 0.5, 1, None),
+            ]
     return params
 
 
@@ -271,11 +303,37 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(expr_in, 0, expr_msg)
     e.connect(expr_msg, 0, ui)
 
-    # Page commands: set <key> <value>, link <k>, unlink <k>, hello, update.
-    commands = e.obj("route set link unlink hello update", 20, 260)
+    # Page commands: set <key> <value>, link <k>, unlink <k>, hello, update,
+    # video (open the video window), record (start or stop recording it).
+    commands = e.obj("route set link unlink hello update video record reveal", 20, 260)
+    reveal = e.msg("reveal", 940, 260)
+    e.connect(commands, 7, reveal)
+    e.connect(reveal, 0, to_hands)
     update_msg = e.msg("update", 600, 260)
     e.connect(commands, 4, update_msg)
     e.connect(update_msg, 0, to_hands)
+    open_video = e.obj("t b", 700, 260)
+    e.connect(commands, 5, open_video)
+    e.connect(open_video, 0, e.obj("s ---mh_vopen", 700, 290))
+    # Record from the editor: open the video window, then let its page start
+    # (it knows the picture's rectangle to capture).
+    record_steps = e.obj("t b b", 820, 260)
+    e.connect(commands, 6, record_steps)
+    e.connect(record_steps, 1, e.obj("s ---mh_vopen", 860, 290))
+    rec_wait = e.obj("delay 700", 820, 320)
+    e.connect(record_steps, 0, rec_wait)
+    rec_req = e.msg("recreq", 820, 350)
+    e.connect(rec_wait, 0, rec_req)
+    e.connect(rec_req, 0, e.obj("s ---mh_vreq", 820, 380))
+    # The video page's commands arrive here too.
+    video_cmds = e.obj("route set hello record reveal", 1000, 230)
+    e.connect(e.obj("r ---mh_vcmd", 1000, 200), 0, video_cmds)
+    video_rec = e.obj("prepend record", 1100, 260)
+    e.connect(video_cmds, 2, video_rec)
+    e.connect(video_rec, 0, to_hands)
+    video_reveal = e.msg("reveal", 1200, 260)
+    e.connect(video_cmds, 3, video_reveal)
+    e.connect(video_reveal, 0, to_hands)
     e.connect(ui, 0, commands)
 
     # Stored parameters: hidden live.numbox objects.
@@ -283,6 +341,7 @@ def build_editor() -> tuple[Patch, dict]:
     keys = [p[0] for p in params]
     strip_keys = e.obj("route notes move", 20, 280)  # master switches live on the strip
     e.connect(commands, 0, strip_keys)
+    e.connect(video_cmds, 0, strip_keys)
     for i, name in enumerate(("s ---mh_notes_set", "s ---mh_move_set")):
         e.connect(strip_keys, i, e.obj(name, 160 + 130 * i, 280))
     setter = e.obj("route " + " ".join(keys), 20, 300)
@@ -292,6 +351,7 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(boot, 0, resend)
     hello_steps = e.obj("t b b", 200, 330)
     e.connect(commands, 3, hello_steps)
+    e.connect(video_cmds, 1, hello_steps)
     e.connect(hello_steps, 1, resend)
     e.connect(resend, 0, e.obj("s ---mh_strip_report", 120, 360))
     e.connect(e.obj("r ---mh_page", 600, 170), 0, ui)
@@ -300,6 +360,7 @@ def build_editor() -> tuple[Patch, dict]:
     e.connect(hello_steps, 0, report)
     e.connect(report, 0, to_hands)
 
+    to_video_params = e.obj("s ---mh_param", 1300, 380)  # the video window shows the same settings
     numbox = {}
     for n, (key, longname, kind, lo, hi, init, invisible, enum) in enumerate(params):
         x, y = 20 + (n % 12) * 150, 420 + (n // 12) * 130
@@ -320,6 +381,7 @@ def build_editor() -> tuple[Patch, dict]:
         echo = e.obj(f"prepend param {key}", x, y + 30)
         e.connect(box, 0, echo)
         e.connect(echo, 0, ui)
+        e.connect(echo, 0, to_video_params)
         if key in ENGINE_MESSAGES:
             prep = e.obj(f"prepend {ENGINE_MESSAGES[key]}", x, y + 60)
             e.connect(box, 0, prep)
@@ -545,6 +607,94 @@ def build_editor() -> tuple[Patch, dict]:
                         editing_bgcolor=[0.141, 0.141, 0.141, 1.0])
 
 
+def build_video() -> dict:
+    """The video window: camera, effects and hands full size, to watch, put on a
+    projector, or record. Its page is mh-video.html."""
+    v = Patch()
+    W, H = VIDEO_SIZE
+    v.obj("inlet", 20, 10)
+    ui = v._add({
+        "maxclass": "jweb", "numinlets": 1, "numoutlets": 1, "outlettype": [""],
+        "patching_rect": [20.0, 300.0, 300.0, 200.0], "presentation": 1,
+        "presentation_rect": [0.0, 0.0, W, H], "rendermode": 1, "url": "", "varname": "video",
+    })
+    tp = v.obj("thispatcher", 400, 600)
+    opened = v.obj("r ---mh_vopen", 400, 20)
+    steps = v.obj("t b b", 400, 50)
+    v.connect(opened, 0, steps)
+    flags = v.msg("window flags grow, window flags zoom, window flags nofloat, window exec", 400, 80)
+    v.connect(steps, 1, flags)
+    v.connect(flags, 0, tp)
+    once = v.obj("onebang 1", 620, 80)
+    v.connect(steps, 0, once)
+    page = v.msg("mh-video.html", 620, 110)
+    v.connect(once, 0, page)
+    locate = v.obj("absolutepath", 620, 140)
+    v.connect(page, 0, locate)
+    read = v.obj("prepend readfile", 620, 170)
+    v.connect(locate, 0, read)
+    v.connect(read, 0, ui)
+    # Pcontrol "open" arrives through the inlet; nothing else to do with it.
+
+    for i, name in enumerate(("r ---mh_view", "r ---mh_info", "r ---mh_page", "r ---mh_param", "r ---mh_vreq")):
+        v.connect(v.obj(name, 20 + 110 * i, 220), 0, ui)
+    expr_in = v.obj("r ---mh_expr", 580, 220)
+    expr_msg = v.obj("prepend expr", 580, 250)
+    v.connect(expr_in, 0, expr_msg)
+    v.connect(expr_msg, 0, ui)
+
+    # Page commands: fullscreen here, everything else to the editor patch.
+    cmds = v.obj("route fullscreen", 20, 530)
+    v.connect(ui, 0, cmds)
+    v.connect(cmds, 1, v.obj("s ---mh_vcmd", 160, 560))
+    full = v.obj("route 1 0", 20, 560)
+    v.connect(cmds, 0, full)
+    # Window rectangle (left top right bottom), polled to keep the page filling the window.
+    current = v.obj("zl reg", 600, 420)
+    saved = v.obj("zl reg", 700, 470)
+    enter = v.obj("t l b", 20, 590)
+    v.connect(full, 0, enter)
+    v.connect(enter, 1, current)              # remember the window before covering the screen
+    v.connect(current, 0, saved, 1)
+    go_full = v.msg("window flags notitle, window size $1 $2 $3 $4, window exec", 20, 620)
+    v.connect(enter, 0, go_full)
+    v.connect(go_full, 0, tp)
+    v.connect(full, 1, saved)
+    leave = v.msg("window flags title, window size $1 $2 $3 $4, window exec", 260, 620)
+    v.connect(saved, 0, leave)
+    v.connect(leave, 0, tp)
+
+    metro = v.obj("metro 250", 400, 330)
+    start = v.msg("1", 400, 300)
+    v.connect(v.obj("r ---mh_boot", 400, 270), 0, start)
+    v.connect(start, 0, metro)
+    ask = v.msg("window getsize", 400, 360)
+    v.connect(metro, 0, ask)
+    v.connect(ask, 0, tp)
+    is_window = v.obj("route window", 400, 650)
+    v.connect(tp, 0, is_window)
+    is_size = v.obj("route size", 400, 680)
+    v.connect(is_window, 0, is_size)
+    v.connect(is_size, 0, current, 1)
+    split = v.obj("t l l", 400, 710)
+    v.connect(is_size, 0, split)
+    width = v.obj("expr $i3 - $i1", 400, 740)
+    height = v.obj("expr $i4 - $i2", 520, 740)
+    v.connect(split, 1, width)
+    v.connect(split, 0, height)
+    size = v.obj("pak 0 0", 400, 770)
+    v.connect(width, 0, size, 0)
+    v.connect(height, 0, size, 1)
+    changed = v.obj("zl change", 400, 800)
+    v.connect(size, 0, changed)
+    resize = v.obj("prepend script sendbox video presentation_rect 0 0", 400, 830)
+    v.connect(changed, 0, resize)
+    v.connect(resize, 0, tp)
+
+    return v.patcher([120.0, 120.0, W, H], toolbarvisible=0, statusbarvisible=0, enablehscroll=0, enablevscroll=0,
+                     title="MidiHands Video", bgcolor=[0.0, 0.0, 0.0, 1.0], editing_bgcolor=[0.0, 0.0, 0.0, 1.0])
+
+
 def build() -> dict:
     Patch._n = 0
     p = Patch()
@@ -651,6 +801,16 @@ def build() -> dict:
         "patching_rect": [200, 180, 90, 20], "patcher": editor_patcher,
     })
     p.connect(pcontrol, 0, editor_box)
+
+    video_open = p.msg("open", 400, 120)
+    p.connect(p.obj("r ---mh_vopen", 400, 90), 0, video_open)
+    video_pcontrol = p.obj("pcontrol", 400, 150)
+    p.connect(video_open, 0, video_pcontrol)
+    video_box = p._add({
+        "maxclass": "newobj", "text": "p MidiHandsVideo", "numinlets": 1, "numoutlets": 0,
+        "patching_rect": [400, 180, 110, 20], "patcher": build_video(),
+    })
+    p.connect(video_pcontrol, 0, video_box)
 
     opened = p.obj("s ---mh_open", 300, 120)
     p.connect(open_button, 0, opened)
