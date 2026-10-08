@@ -193,7 +193,6 @@ body.notes-off .pads { opacity: .45; }
 .fxcard { position: relative; border: 1px solid transparent; }
 .fxcard.sel { border-color: var(--fg); }
 .fxcard.dragging { opacity: .5; }
-.fxcard.bypass .fxknobs { opacity: .45; }
 .fxslots { position: relative; }
 .fxdrop { position: absolute; left: 0; right: 0; height: 2px; background: var(--orange); pointer-events: none; }
 .fxadd { align-self: flex-start; padding: 6px 14px; }
@@ -993,7 +992,6 @@ function renderFx() {
     c.querySelector(".sw").classList.toggle("set", !!sw);
     c.querySelectorAll(".swm button").forEach((b) => b.classList.toggle("on", +b.dataset.v === (P[`x${s}swm`] | 0)));
     c.classList.toggle("empty", !fx);
-    c.classList.toggle("bypass", P[`x${s}on`] === 0);
     c.classList.toggle("sel", S.fxSel === s);
     c.querySelectorAll(".fxknob").forEach((cell, j) => {
       const name = j === 0 ? "Mix" : (fx && fx.knobs[j - 1] ? fx.knobs[j - 1].name : "");
